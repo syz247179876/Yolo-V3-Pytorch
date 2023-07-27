@@ -27,9 +27,9 @@ class BasicBlock(nn.Module):
         self.bn = norm_layer(out_channels) if norm_layer else nn.BatchNorm2d(out_channels)
         self.relu = nn.LeakyReLU(0.1, inplace=True)
 
-        if kernel_size[0] == 1:
+        if isinstance(kernel_size, int) and kernel_size == 1 or isinstance(kernel_size, list) and kernel_size[0] == 1:
             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, stride=0, bias=False)
-        elif kernel_size[0] == 3:
+        elif isinstance(kernel_size, int) and kernel_size == 3 or isinstance(kernel_size, list) and kernel_size[0] == 3:
             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=stride, bias=False)
         else:
             raise Exception('not support kernel size except for 1x1, 3x3')
@@ -52,7 +52,7 @@ class ResidualBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(channels[0])
         self.relu1 = nn.LeakyReLU(0.1)
 
-        self.conv2 = nn.Conv2d(channels[0], channels[1], 1, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(channels[0], channels[1], 3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(channels[1])
         self.relu2 = nn.LeakyReLU(0.1)
 
@@ -128,3 +128,11 @@ class BackBone(nn.Module):
         out_4 = self.layer4(out_3)
         out_5 = self.layer5(out_4)
         return out_3, out_4, out_5
+
+
+if __name__ == "__main__":
+
+    model = BackBone()
+    x = torch.randn([1, 3, 416, 416])
+    res = model(x)
+    print(res[0].size(), res[1].size(), res[2].size())
