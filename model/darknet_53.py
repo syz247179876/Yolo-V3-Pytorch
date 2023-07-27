@@ -20,7 +20,7 @@ class BasicBlock(nn.Module):
             in_channels: int,
             out_channels: int,
             kernel_size: t.Union[int, t.Tuple[int, int]],
-            stride: int,
+            stride: int = 1,
             norm_layer: t.Optional[t.Callable[..., nn.Module]] = None,
     ):
         super(BasicBlock, self).__init__()
@@ -28,7 +28,7 @@ class BasicBlock(nn.Module):
         self.relu = nn.LeakyReLU(0.1, inplace=True)
 
         if isinstance(kernel_size, int) and kernel_size == 1 or isinstance(kernel_size, list) and kernel_size[0] == 1:
-            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, stride=0, bias=False)
+            self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0, stride=1, bias=False)
         elif isinstance(kernel_size, int) and kernel_size == 3 or isinstance(kernel_size, list) and kernel_size[0] == 3:
             self.conv = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1, stride=stride, bias=False)
         else:
@@ -130,9 +130,90 @@ class BackBone(nn.Module):
         return out_3, out_4, out_5
 
 
-if __name__ == "__main__":
+class Darknet53(nn.Module):
 
+    def __init__(self, dataset_name: str = 'VOC'):
+        """
+        dataset can be 'VOC' or 'COCO',
+        build the three FPN layer to enhance feature extraction
+        """
+        super(Darknet53, self).__init__()
+        self.backbone = BackBone()
+        feature_channel = ANCHORS * (1 + 4 + globals().get(f'{dataset_name}_CLASS_NUM'))
+        self.final_filter_1 = self._last_layers((512, 1024), DRK_53_LAYER_OUT_CHANNELS[-1], feature_channel)
+        # use to feature fusion
+        self.final_filter_conv_1 = BasicBlock(512, 256, 1)
+        # up-sampling
+        self.up_sample_1 = nn.Upsample(scale_factor=2, mode='nearest')
+
+        self.final_filter_2 = self._last_layers((256, 512), DRK_53_LAYER_OUT_CHANNELS[-2] + 256, feature_channel)
+        self.final_filter_conv_2 = BasicBlock(256, 128, 1)
+        self.up_sample_2 = nn.Upsample(scale_factor=2, mode='nearest')
+
+        self.final_filter_3 = self._last_layers((128, 256), DRK_53_LAYER_OUT_CHANNELS[-3] + 128, feature_channel)
+
+    def forward(self, inputs: torch.Tensor) -> t.Tuple[torch.Tensor, ...]:
+        """
+        feature map size and down sample multiple
+        x3: 52x52, 8
+        x2: 26x26, 16
+        x1: 13x13, 32
+
+        Output:
+            three scale features extracted after feature fusion
+
+        note: three scale, two feature fusion
+        """
+        x3, x2, x1 = self.backbone(inputs)
+        out_1_branch = self.final_filter_1[:5](x1)  # 13x13x512
+        x1 = self.final_filter_1[5:](out_1_branch)  # 13x13x75 or 13x13x255
+        # the first layer feature fusion
+        x1_fusion = self.final_filter_conv_1(out_1_branch)
+        x1_fusion = self.up_sample_1(x1_fusion)
+        x1_fusion = torch.cat((x2, x1_fusion), dim=1)
+
+        out_2_branch = self.final_filter_2[:5](x1_fusion)  # 26x26x256
+        x2 = self.final_filter_2[5:](out_2_branch)  # 26x26x75 or 26x26x255
+        # the second layer feature fusion
+        x2_fusion = self.final_filter_conv_2(out_2_branch)
+        x2_fusion = self.up_sample_2(x2_fusion)
+        x2_fusion = torch.cat((x3, x2_fusion), dim=1)
+
+        x3 = self.final_filter_3(x2_fusion)  # 52x52x75 or 52x52x255
+
+        return x1, x2, x3
+
+    @staticmethod
+    def _last_layers(mid_channels: t.Tuple[int, int], in_channel: int, out_channel: int) -> nn.Sequential:
+        """
+        the last layer includes a total of 7 layers of convolutions,
+        which are divided into two parts.
+        1.the first five layers use to perform feature fusion with the previous layer
+        2.the last two layers use to predict according to fusion features
+
+        note:
+        For example,
+        if we use VOC dataset, the out_channels = anchor_num * (1 + 4 + class_num) = 3 * 25 = 75;
+        if we use COCO dataset, the out_channels = 3 * (1 + 4 + 80) = 255.
+
+        """
+        return nn.Sequential(
+            BasicBlock(in_channel, mid_channels[0], kernel_size=1),
+            BasicBlock(mid_channels[0], mid_channels[1], kernel_size=3),
+            BasicBlock(mid_channels[1], mid_channels[0], kernel_size=1),
+            BasicBlock(mid_channels[0], mid_channels[1], kernel_size=3),
+            BasicBlock(mid_channels[1], mid_channels[0], kernel_size=1),
+
+            BasicBlock(mid_channels[0], mid_channels[1], kernel_size=3),
+            nn.Conv2d(mid_channels[1], out_channel, kernel_size=1, bias=True)
+        )
+
+
+if __name__ == "__main__":
     model = BackBone()
-    x = torch.randn([1, 3, 416, 416])
-    res = model(x)
+    x_ = torch.randn([1, 3, 416, 416])
+    res = model(x_)
+    print(res[0].size(), res[1].size(), res[2].size())
+    darknet_53 = Darknet53()
+    res = darknet_53(x_)
     print(res[0].size(), res[1].size(), res[2].size())
