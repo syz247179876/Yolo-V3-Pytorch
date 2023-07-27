@@ -80,13 +80,13 @@ class ResNet18(nn.Module):
         )
         self.net = nn.Sequential(self.block_1, self.block_2, self.block_3, self.block_4, self.block_5,
                                  nn.AdaptiveAvgPool2d((1, 1)),
-                                 nn.Flatten(),  # [B, 512, 1, 1] --> [B, 512, 1]
-                                 nn.Linear(512, 10)  # [B, 512, 1] --> [B, 10, 1]
+                                 nn.Flatten(),  # [B, 512, 1, 1] --> [B, 512]
+                                 nn.Linear(512, 10)  # [B, 512] --> [B, 10]
                                  )
 
     def forward(self, inputs):
         return self.net(inputs)
-        # for layer in self.net:
+        # for layer in self.model:
         #     inputs = layer(inputs)
         #     print(layer.__class__.__name__, 'output shape:\t', inputs.shape)
         # return inputs
