@@ -139,7 +139,7 @@ class Darknet53(nn.Module):
         """
         super(Darknet53, self).__init__()
         self.backbone = BackBone()
-        feature_channel = ANCHORS * (1 + 4 + globals().get(f'{dataset_name}_CLASS_NUM'))
+        feature_channel = ANCHORS_NUM * (1 + 4 + globals().get(f'{dataset_name}_CLASS_NUM'))
         self.final_filter_1 = self._last_layers((512, 1024), DRK_53_LAYER_OUT_CHANNELS[-1], feature_channel)
         # use to feature fusion
         self.final_filter_conv_1 = BasicBlock(512, 256, 1)
