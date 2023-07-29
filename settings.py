@@ -15,3 +15,22 @@ COCO_CLASS_NUM = 80
 ANCHORS = [[(116, 90), (156, 198), (327, 326)],
            [(30, 61), (64, 45), (59, 119)],
            [(10, 13), (16, 30), (33, 23)], ]
+ANCHORS_MASK = [
+    [6, 7, 8],
+    [3, 4, 5],
+    [0, 1, 2]
+]
+# VOC dataset category
+VOC_CLASSES = (
+    'aeroplane', 'bicycle', 'bird', 'boat',
+    'bottle', 'bus', 'car', 'cat', 'chair',
+    'cow', 'diningtable', 'dog', 'horse',
+    'motorbike', 'person', 'pottedplant',
+    'sheep', 'sofa', 'train', 'tvmonitor'
+)
+# VOC dataset category num
+VOC_CLASSES_LEN = 20
+# xml dir
+ANNOTATIONS_DIR = 'Annotations'
+# pic dir
+IMAGE_DIR = 'JPEGImages'
