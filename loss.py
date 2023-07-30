@@ -7,26 +7,26 @@ from settings import *
 from utils import compute_iou_gt_anchors
 
 
-class YoloLoss(nn.Module):
+class YoloV3Loss(nn.Module):
 
     def __init__(
             self,
-            anchors: [t.List[t.List]],
+            anchors: [t.List[t.List]] = ANCHORS,
             classes_num: int = VOC_CLASS_NUM,
             input_shape: t.Tuple[int, int] = (416, 416),
-            use_gpu: bool = False,
     ):
-        super(YoloLoss, self).__init__()
+        super(YoloV3Loss, self).__init__()
         self.anchors = anchors
         self.classes_num = classes_num
         self.input_shape = input_shape
         self.opts = args_train.opts
         self.use_gpu = args_train.opts.use_gpu
+        self.gpu_id = args_train.opts.gpu_id
 
     def generator_labels(
             self,
             level: int,
-            labels: t.List[torch.Tensor],
+            labels: torch.Tensor[torch.Tensor],
             scaled_anchors: t.List[t.Tuple],
             f_h: int,
             f_w: int
@@ -90,7 +90,7 @@ class YoloLoss(nn.Module):
                         # set positive samples
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, -1] = 1
                     elif iou_plural[i][a_id] < self.opts.anchors_thresh:
-                        # set positive samples
+                        # set negative samples
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, -1] = -1
 
         return gt_tensor, box_loss_scale
@@ -100,9 +100,10 @@ class YoloLoss(nn.Module):
         Input:
             level: it means the level of feature map, there are three level in YOLO v3 net, 13x13, 26x26, 52x52
         """
-        conf_loss_func = nn.BCELoss(reduction='mean')
-        coord_loss_func = nn.MSELoss(reduction='mean')
-        cls_loss_func = nn.CrossEntropyLoss(reduction='mean')
+        conf_loss_func = nn.BCELoss(reduction='none')
+        xy_loss_func = nn.BCELoss(reduction='none')
+        wh_loss_func = nn.BCELoss(reduction='none')
+        cls_loss_func = nn.CrossEntropyLoss(reduction='none')
 
         batch_size, _, f_w, f_h = pred.size()
         stride_h = self.input_shape[0] / f_h
@@ -121,3 +122,30 @@ class YoloLoss(nn.Module):
         pred_cls = pred[..., 5:]
 
         gt_tensor, box_loss_scale = self.generator_labels(level, labels, scaled_anchors, f_h, f_w)
+
+        if self.use_gpu:
+            gt_tensor = gt_tensor.to(self.gpu_id)
+            # small obj has larger scale weight, larger obj has smaller scale weight
+            box_loss_scale = (2 - box_loss_scale).to(self.gpu_id)
+
+        avg_loss = torch.tensor(0.)
+
+        # coordinate offset loss
+        loss_tx = torch.mean(
+            xy_loss_func(tx, gt_tensor[..., 0]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+        loss_ty = torch.mean(
+            xy_loss_func(ty, gt_tensor[..., 1]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+
+        loss_tw = torch.mean(
+            wh_loss_func(tw, gt_tensor[..., 2]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+        loss_th = torch.mean(
+            wh_loss_func(th, gt_tensor[..., 3]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+
+        loss_cls = torch.mean(cls_loss_func(pred_cls, gt_tensor[..., 5:]) * gt_tensor[..., -1])
+
+        loss_conf = torch.mean(conf_loss_func(pred_conf[gt_tensor[..., 4] == 1], gt_tensor[gt_tensor[..., 4] == 1]))
+        no_obj_loss_conf = torch.mean(
+            conf_loss_func(pred_conf[gt_tensor[..., 4] == -1], gt_tensor[gt_tensor[..., 4] == -1]))
+        avg_loss += loss_tx + loss_ty + loss_tw + loss_th + loss_cls + loss_conf + no_obj_loss_conf
+
+        return avg_loss

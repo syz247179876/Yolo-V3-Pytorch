@@ -1,7 +1,7 @@
 import typing as t
-
 import torch
 from PIL import Image
+from colorama import Fore
 
 
 def resize_img(image: t.Any, new_size: t.Tuple[int, int], letterbox_image: bool):
@@ -67,6 +67,26 @@ def compute_iou_gt_anchors(
     a_area = anchor_boxes[:, 2] * anchor_boxes[:, 3]
 
     return inter / (gt_area + a_area - inter + 1e-20)
+
+
+def print_log(txt: str, color: t.Any = Fore.RED):
+    print(color, txt)
+
+
+def detection_collate(batch: t.Iterable[t.Tuple]):
+    """
+    custom collate func for dealing with batches of images that have a different number
+    of object annotations (bbox).
+
+    by the way, this func is used to customize the content returned by the dataloader.
+    """
+
+    labels = []
+    images = []
+    for img, label in batch:
+        images.append(img)
+        labels.append(label)
+    return torch.stack(images, dim=0), labels
 
 
 if __name__ == "__main__":
