@@ -51,7 +51,7 @@ class Args(object):
         self.parser.add_argument('--lr_max', type=float, default=5e-2, help='maximum of learning rate')
         self.parser.add_argument('--lr_min', type=float, default=5e-4, help='minimum of learning rate')
         self.parser.add_argument('--weight_decay', type=float, default=1e-4, help='regularization coefficient')
-        self.parser.add_argument('--pretrain_file', type=str, default=r'./checkpoints_dir/epoch52.pkl',
+        self.parser.add_argument('--pretrain_file', type=str,
                                  help='store the latest model file')
         self.parser.add_argument('--random_seed', type=int, default=42)
         self.parser.add_argument('--print_frequency', type=int, default=60, help='print interval')
@@ -60,7 +60,7 @@ class Args(object):
         self.parser.add_argument('--shuffle', action='store_true', default=True)
         self.parser.add_argument('--drop_last', action='store_true', default=True)
 
-        self.parser.add_argument('--start_epoch', type=int, default=53)
+        self.parser.add_argument('--start_epoch', type=int, default=0)
         self.parser.add_argument('--end_epoch', type=int, default=100)
 
         # loss weight

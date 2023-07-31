@@ -44,7 +44,7 @@ def resize_img_box(
         new_image = image.resize((n_w, n_h), Image.BICUBIC)
         # TODO resize box
 
-    return np.array(image, np.float32), labels
+    return np.array(new_image, np.float32), labels
 
 
 def compute_iou_gt_anchors(
@@ -52,10 +52,10 @@ def compute_iou_gt_anchors(
         anchor_boxes: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Calculate the iou of anchors(dimension is [b,4]) and gt boxes(dimension is [9,4])
+    Calculate the iou of gt boxes(dimension is [b,4]) and anchors(dimension is [9,4])
     Input:
-            anchor_boxes: Tensor -> [b, 4]
-            gt_boxes: Tensor -> [9, 4]
+            gt_boxes: Tensor -> [b, 4]
+            anchor_boxes: Tensor -> [9, 4]
     Output:
             iou_plural: Tensor -> [b, 9]
 
@@ -69,9 +69,9 @@ def compute_iou_gt_anchors(
     gt_x2, gt_y2 = gt_boxes[:, 0] + gt_boxes[:, 2] / 2, gt_boxes[:, 1] + gt_boxes[:, 3] / 2
 
     # store top-left and bottom-right coordinate
-    box_a, box_gt = torch.zeros(anchor_boxes), torch.zeros(gt_boxes)
-    box_a[:, 0], box_a[:, 1], box_a[:, 0], box_a[:, 1] = a_x1, a_y1, a_x2, a_y2
-    box_gt[:, 0], box_gt[:, 1], box_gt[:, 0], box_gt[:, 1] = gt_x1, gt_y1, gt_x2, gt_y2
+    box_a, box_gt = torch.zeros_like(anchor_boxes), torch.zeros_like(gt_boxes)
+    box_a[:, 0], box_a[:, 1], box_a[:, 2], box_a[:, 3] = a_x1, a_y1, a_x2, a_y2
+    box_gt[:, 0], box_gt[:, 1], box_gt[:, 2], box_gt[:, 3] = gt_x1, gt_y1, gt_x2, gt_y2
 
     a_size, gt_size = anchor_boxes.size(0), gt_boxes.size(0)
 
@@ -86,13 +86,13 @@ def compute_iou_gt_anchors(
     inter = inter[..., 0] * inter[..., 1]
 
     # compute union
-    gt_area = gt_boxes[:, 2] * gt_boxes[:, 3]
-    a_area = anchor_boxes[:, 2] * anchor_boxes[:, 3]
+    gt_area = (gt_boxes[:, 2] * gt_boxes[:, 3]).unsqueeze(1).expand_as(inter)
+    a_area = (anchor_boxes[:, 2] * anchor_boxes[:, 3]).unsqueeze(0).expand_as(inter)
 
     return inter / (gt_area + a_area - inter + 1e-20)
 
 
-def print_log(txt: str, color: t.Any = Fore.RED):
+def print_log(txt: str, color: t.Any = Fore.GREEN):
     print(color, txt)
 
 
@@ -114,12 +114,36 @@ def detection_collate(batch: t.Iterable[t.Tuple]):
 
 class ImageAugmentation(object):
 
-    def __call__(self, image_path: str, labels: np.ndarry, input_shape=(416, 416)):
+    def __call__(self, image_path: str, labels: np.ndarray, input_shape=(416, 416)) -> t.Tuple[np.ndarray, np.ndarray]:
         image = Image.open(image_path)
         image.convert('RGB')
         # resize image and add grey on image, modify shape of ground-truth box (label) according to after-resized image
         image_data, labels = resize_img_box(image, labels, input_shape, True)
         return image_data, labels
+
+
+class Normalization(object):
+
+    def __init__(self, img_shape: t.Tuple[int, int] = (416, 416), mode='simple'):
+        self.mode = mode
+        self.img_shape = img_shape
+
+    def __call__(self, images: np.ndarray, boxes: np.ndarray) -> t.Tuple[np.ndarray, np.ndarray]:
+        func = getattr(self, self.mode)
+        return func(images, boxes)
+
+    def simple(self, images: np.ndarray, boxes: np.ndarray) -> t.Tuple[np.ndarray, np.ndarray]:
+        """
+        simple normalization function, it directly divided the limit upper.
+        for example
+        1. for images, divide each pixel by 255
+        2. for boxes, the center of the box divided by the width and height of the entire image
+        """
+        images = images / 255.0
+        if len(boxes):
+            boxes[:, [0, 2]] = boxes[:, [0, 2]] / self.img_shape[1]
+            boxes[:, [1, 3]] = boxes[:, [1, 3]] / self.img_shape[0]
+        return images, boxes
 
 
 if __name__ == "__main__":

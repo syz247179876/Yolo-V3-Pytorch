@@ -27,28 +27,31 @@ class YoloV3Train(object):
             epoch: int,
             train_num: int,
     ) -> None:
-
+        total_loss = 0
         with open(os.path.join(self.opts.checkpoints_dir, 'log.txt'), 'a+') as log_f:
             for batch, (x, labels) in enumerate(train_loader):
 
                 if self.opts.use_gpu:
                     x = x.to(self.opts.gpu_id)
-                    labels = labels.to(self.opts.gpu_id)
+                    # labels = labels.to(self.opts.gpu_id)
 
-                pred = model(x)
-                loss = loss_obj(pred, labels)
+                pred: t.Tuple[torch.Tensor] = model(x)
+                # calculate loss of different feature level
+                cur_loss = torch.tensor(0).float().to(self.opts.gpu_id)
+                for idx, output in enumerate(pred):
+                    cur_loss += loss_obj(idx, output, labels)
                 optimizer.zero_grad()
-                loss.backward()
+                cur_loss.backward()
                 optimizer.step()
-                avg_loss = loss.item()
+                total_loss += cur_loss.item()
 
                 if batch % self.opts.print_frequency == 0:
-                    print_log("Epoch %d/%d | Iter %d/%d | training loss = %.3f, avg_loss = %.3f" %
-                              (epoch, self.opts.end_epoch, batch, train_num // self.opts.batch_size, loss.item(),
-                               avg_loss))
-                    log_f.write("Epoch %d/%d | Iter %d/%d | training loss = %.3f, avg_loss = %.3f\n" %
-                                (epoch, self.opts.end_epoch, batch, train_num // self.opts.batch_size, loss.item(),
-                                 avg_loss))
+                    print_log("Epoch %d/%d | Iter %d/%d | training loss = %.6f, avg_loss = %.6f" %
+                              (epoch, self.opts.end_epoch, batch, train_num // self.opts.batch_size, cur_loss.item(),
+                               total_loss / (batch + 1)))
+                    log_f.write("Epoch %d/%d | Iter %d/%d | training loss = %.6f, avg_loss = %.6f\n" %
+                                (epoch, self.opts.end_epoch, batch, train_num // self.opts.batch_size, cur_loss.item(),
+                                 total_loss / (batch + 1)))
                     log_f.flush()
 
     def __save_model(
@@ -94,7 +97,7 @@ class YoloV3Train(object):
         train_num = len(train_dataset)
 
         if not self.opts.pretrain_file:
-            model = YoloV3Loss()
+            model = Darknet53()
             print_log('Init model successfully!')
         else:
             model = torch.load(self.opts.pretrain_file)

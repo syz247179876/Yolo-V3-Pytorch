@@ -11,7 +11,7 @@ class YoloV3Loss(nn.Module):
 
     def __init__(
             self,
-            anchors: [t.List[t.List]] = ANCHORS,
+            anchors: t.List[t.List] = ANCHORS,
             classes_num: int = VOC_CLASS_NUM,
             input_shape: t.Tuple[int, int] = (416, 416),
     ):
@@ -26,7 +26,7 @@ class YoloV3Loss(nn.Module):
     def generator_labels(
             self,
             level: int,
-            labels: torch.Tensor[torch.Tensor],
+            labels: torch.Tensor,
             scaled_anchors: t.List[t.Tuple],
             f_h: int,
             f_w: int
@@ -53,14 +53,14 @@ class YoloV3Loss(nn.Module):
             batch_tensor[:, [0, 2]] = batch_label[:, [0, 2]] * f_w
             batch_tensor[:, [1, 3]] = batch_label[:, [1, 3]] * f_h
             batch_tensor[:, 4] = batch_label[:, 4]
-            batch_tensor = batch_tensor.cpu()
 
             """
             compute iou between anchors and labels, we only pay attention to the shape of w and h, not care center 
             position, as we can learn the offset continuously.
             """
             gt_box = torch.cat((torch.zeros((batch_tensor.size(0), 2)), batch_tensor[:, [2, 3]]), 1).type(torch.float32)
-            anchors_box = torch.cat((torch.zeros(len(self.anchors), 2), self.anchors), 1).type(torch.float32)
+            anchors_box = torch.cat((torch.zeros(len(scaled_anchors), 2), torch.tensor(scaled_anchors)), 1).type(
+                torch.float32)
 
             # TODO: can we use the anchors relative to the current feature layer, not all anchors?
             iou_plural = compute_iou_gt_anchors(gt_box, anchors_box)
@@ -70,14 +70,13 @@ class YoloV3Loss(nn.Module):
             # generate positive, ignore and negative samples' label
             for i, a_idxes in enumerate(iou_plural):
                 # best anchor not in the anchors relative to the current level feature map
-                best_a_idx = best_iou_plural[i][0]
-                for a_id in a_idxes:
-                    aim_a_idx = ANCHORS_MASK[level].index(best_a_idx)
+                best_a_idx = best_iou_plural[i]
+                for a_id in range(len(a_idxes)):
                     grid_x = torch.floor(batch_tensor[i, 0]).long()
                     grid_y = torch.floor(batch_tensor[i, 1]).long()
                     if a_id == best_a_idx and best_a_idx in ANCHORS_MASK[level]:
                         # access best anchor by using ANCHORS_MASK[level][aim_a_idx], 0 <= aim_a_dix <= 2
-
+                        aim_a_idx = ANCHORS_MASK[level].index(best_a_idx)
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 0] = batch_tensor[i, 0] - grid_x.float()
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 1] = batch_tensor[i, 1] - grid_y.float()
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 2] = torch.log(
@@ -89,8 +88,9 @@ class YoloV3Loss(nn.Module):
                         box_loss_scale[batch_idx, aim_a_idx, grid_y, grid_x] = batch_label[i, 2] * batch_label[i, 3]
                         # set positive samples
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, -1] = 1
-                    elif iou_plural[i][a_id] < self.opts.anchors_thresh:
+                    elif iou_plural[i][a_id] < self.opts.anchors_thresh and a_id in ANCHORS_MASK[level]:
                         # set negative samples
+                        aim_a_idx = ANCHORS_MASK[level].index(a_id)
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, -1] = -1
 
         return gt_tensor, box_loss_scale
@@ -103,49 +103,60 @@ class YoloV3Loss(nn.Module):
         conf_loss_func = nn.BCELoss(reduction='none')
         xy_loss_func = nn.BCELoss(reduction='none')
         wh_loss_func = nn.BCELoss(reduction='none')
-        cls_loss_func = nn.CrossEntropyLoss(reduction='none')
+        cls_loss_func = nn.BCEWithLogitsLoss(reduction='none')
 
         batch_size, _, f_w, f_h = pred.size()
         stride_h = self.input_shape[0] / f_h
         stride_w = self.input_shape[1] / f_w
 
-        scaled_anchors = [(anchor_w / stride_w, anchor_h / stride_h) for anchor_w, anchor_h in ANCHORS[level]]
+        scaled_anchors = [(anchor_w / stride_w, anchor_h / stride_h) for anchor_level in ANCHORS for anchor_w, anchor_h
+                          in anchor_level]
         pred = pred.view(batch_size, ANCHORS_NUM, 4 + 1 + self.classes_num, f_h, f_w). \
             permute(0, 1, 3, 4, 2).contiguous()
 
         tx = torch.sigmoid(pred[..., 0])
         ty = torch.sigmoid(pred[..., 1])
-        tw = pred[..., 2]
-        th = pred[..., 3]
+        tw = torch.sigmoid(pred[..., 2])
+        th = torch.sigmoid(pred[..., 3])
 
         pred_conf = torch.sigmoid(pred[..., 4])
         pred_cls = pred[..., 5:]
 
         gt_tensor, box_loss_scale = self.generator_labels(level, labels, scaled_anchors, f_h, f_w)
-
+        avg_loss = torch.tensor(0.)
         if self.use_gpu:
             gt_tensor = gt_tensor.to(self.gpu_id)
+            tx = tx.to(self.gpu_id)
+            ty = ty.to(self.gpu_id)
+            tw = tw.to(self.gpu_id)
+            th = th.to(self.gpu_id)
+            pred_conf = pred_conf.to(self.gpu_id)
+            pred_cls = pred_cls.to(self.gpu_id)
+            avg_loss = avg_loss.to(self.gpu_id)
+
             # small obj has larger scale weight, larger obj has smaller scale weight
             box_loss_scale = (2 - box_loss_scale).to(self.gpu_id)
 
-        avg_loss = torch.tensor(0.)
-
         # coordinate offset loss
         loss_tx = torch.mean(
-            xy_loss_func(tx, gt_tensor[..., 0]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+            xy_loss_func(tx, gt_tensor[..., 0]) * (
+                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
         loss_ty = torch.mean(
-            xy_loss_func(ty, gt_tensor[..., 1]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+            xy_loss_func(ty, gt_tensor[..., 1]) * (
+                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
 
         loss_tw = torch.mean(
-            wh_loss_func(tw, gt_tensor[..., 2]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+            wh_loss_func(tw, gt_tensor[..., 2]) * (
+                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
         loss_th = torch.mean(
-            wh_loss_func(th, gt_tensor[..., 3]) * gt_tensor[..., -1] * box_loss_scale * self.opts.coord_weight)
+            wh_loss_func(th, gt_tensor[..., 3]) * (
+                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
 
-        loss_cls = torch.mean(cls_loss_func(pred_cls, gt_tensor[..., 5:]) * gt_tensor[..., -1])
-
-        loss_conf = torch.mean(conf_loss_func(pred_conf[gt_tensor[..., 4] == 1], gt_tensor[gt_tensor[..., 4] == 1]))
+        loss_cls = torch.mean(
+            cls_loss_func(pred_cls, gt_tensor[..., 5:-1]) * (gt_tensor[..., -1] == 1).float().unsqueeze(-1))
+        loss_conf = torch.mean(
+            conf_loss_func(pred_conf, gt_tensor[..., 4]) * (gt_tensor[..., -1] == 1).float())
         no_obj_loss_conf = torch.mean(
-            conf_loss_func(pred_conf[gt_tensor[..., 4] == -1], gt_tensor[gt_tensor[..., 4] == -1]))
+            conf_loss_func(pred_conf, gt_tensor[..., 4]) * (gt_tensor[..., -1] == -1).float())
         avg_loss += loss_tx + loss_ty + loss_tw + loss_th + loss_cls + loss_conf + no_obj_loss_conf
-
         return avg_loss
