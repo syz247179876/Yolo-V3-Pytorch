@@ -46,9 +46,13 @@ class Args(object):
         self.parser.add_argument('--use_gpu', action='store_true')
         self.parser.add_argument('--gpu_id', type=int, default=None)
         self.parser.add_argument('--num_workers', type=int, default=4)
-        self.parser.add_argument('-lr', type=float, default=.00001, help='learning rate')
+        # learning rate interval
+        self.parser.add_argument('--lr_base', type=float, default=1e-2)
+        self.parser.add_argument('--lr_max', type=float, default=5e-2, help='maximum of learning rate')
+        self.parser.add_argument('--lr_min', type=float, default=5e-4, help='minimum of learning rate')
         self.parser.add_argument('--weight_decay', type=float, default=1e-4, help='regularization coefficient')
-        self.parser.add_argument('--pretrain_file', type=str, default=r'./checkpoints_dir/epoch52.pkl', help='store the latest model file')
+        self.parser.add_argument('--pretrain_file', type=str, default=r'./checkpoints_dir/epoch52.pkl',
+                                 help='store the latest model file')
         self.parser.add_argument('--random_seed', type=int, default=42)
         self.parser.add_argument('--print_frequency', type=int, default=60, help='print interval')
         self.parser.add_argument('--save_frequency', type=int, default=3, help='store model interval')
@@ -60,8 +64,11 @@ class Args(object):
         self.parser.add_argument('--end_epoch', type=int, default=100)
 
         # loss weight
-        self.parser.add_argument('--coord_weight', type=float, default=2.5)
-        self.parser.add_argument('--no_obj_weight', type=float, default=0.5)
+        self.parser.add_argument('--coord_weight', type=float, default=1.)
+        self.parser.add_argument('--no_obj_weight', type=float, default=1.)
+
+        self.parser.add_argument('--decrease_interval', type=int, default=30,
+                                 help='decrease learning rate every 30 epoch')
         self.opts = self.parser.parse_args()
 
         if torch.cuda.is_available():

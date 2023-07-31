@@ -34,3 +34,5 @@ VOC_CLASSES_LEN = 20
 ANNOTATIONS_DIR = 'Annotations'
 # pic dir
 IMAGE_DIR = 'JPEGImages'
+# Input Size
+INPUT_SHAPE = 416, 416

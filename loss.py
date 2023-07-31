@@ -35,7 +35,7 @@ class YoloV3Loss(nn.Module):
         divide positive labels, negative labels, ignore labels
 
         Input:
-            labels: t.List[torch.Tensor] -> [[[x_min, y_min, x_max, y_max], ...], [], []]
+            labels: torch.Tensor[torch.Tensor] -> [[[x_min, y_min, x_max, y_max], ...], [], []]
             x_min, y_min, x_max, y_max has been normalized
         """
         batch_size = len(labels)

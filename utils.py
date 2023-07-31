@@ -1,33 +1,56 @@
 import typing as t
 import torch
+import numpy as np
 from PIL import Image
 from colorama import Fore
 
 
-def resize_img(image: t.Any, new_size: t.Tuple[int, int], letterbox_image: bool):
+def resize_img_box(
+        image: t.Any,
+        labels: np.ndarray,
+        new_size: t.Tuple[int, int],
+        letterbox_image: bool
+) -> t.Tuple[np.ndarray, np.ndarray]:
     """
-    resize img, add padding to picture <==> scale and paste
+    1.resize img, add padding to picture <==> scale and paste.
+    2.resize each box in each sample according to new_size
     """
     o_w, o_h = image.size
     n_w, n_h = new_size
+
     if letterbox_image:
         # no deformed conversion
         scale = min(n_w / o_w, n_h / o_h)
         n_w_ = int(o_w * scale)
         n_h_ = int(o_h * scale)
-
+        dw = (n_w - n_w_) // 2
+        dh = (n_h - n_h_) // 2
         image = image.resize((n_w_, n_h_), Image.BICUBIC)
         new_image = Image.new('RGB', new_size, (128, 128, 128))
-        new_image.paste(image, ((n_w - n_w_) // 2, (n_h - n_h_) // 2))
+        new_image.paste(image, (dw, dh))
+
+        if len(labels) > 0:
+            # np.random.shuffle(labels)
+            labels[:, [0, 2]] = labels[:, [0, 2]] * scale + dw
+            labels[:, [1, 3]] = labels[:, [1, 3]] * scale + dh
+            labels[:, 0: 2][labels[:, 0: 2] < 0] = 0
+            labels[:, 2][labels[:, 2] > n_w] = n_w
+            labels[:, 3][labels[:, 3] > n_h] = n_h
+            box_w = labels[:, 2] - labels[:, 0]
+            box_h = labels[:, 3] - labels[:, 1]
+            # filter invalid box, which width and height of box less than 1.
+            labels = labels[np.logical_and(box_w > 1, box_h > 1)]
     else:
         new_image = image.resize((n_w, n_h), Image.BICUBIC)
-    return new_image
+        # TODO resize box
+
+    return np.array(image, np.float32), labels
 
 
 def compute_iou_gt_anchors(
-        gt_boxes: torch.Tensor[torch.Tensor],
-        anchor_boxes: torch.Tensor[torch.Tensor],
-) -> torch.Tensor[torch.Tensor]:
+        gt_boxes: torch.Tensor,
+        anchor_boxes: torch.Tensor,
+) -> torch.Tensor:
     """
     Calculate the iou of anchors(dimension is [b,4]) and gt boxes(dimension is [9,4])
     Input:
@@ -89,9 +112,17 @@ def detection_collate(batch: t.Iterable[t.Tuple]):
     return torch.stack(images, dim=0), labels
 
 
+class ImageAugmentation(object):
+
+    def __call__(self, image_path: str, labels: np.ndarry, input_shape=(416, 416)):
+        image = Image.open(image_path)
+        image.convert('RGB')
+        # resize image and add grey on image, modify shape of ground-truth box (label) according to after-resized image
+        image_data, labels = resize_img_box(image, labels, input_shape, True)
+        return image_data, labels
+
+
 if __name__ == "__main__":
     file_path = r'C:\Users\24717\Projects\pascal voc2012\VOCdevkit\VOC2012\JPEGImages\2007_000032.jpg'
     image_ = Image.open(file_path)
-
-    image_ = resize_img(image_, (416, 416), True)
     image_.show()
