@@ -107,4 +107,4 @@ if __name__ == "__main__":
     X = torch.rand((4, 3, 224, 224))
     model = ResNet18()
     Y = model(X)
-    print(Y.size())
+    print(model)
