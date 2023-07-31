@@ -85,7 +85,8 @@ class YoloV3Loss(nn.Module):
                             batch_tensor[i, 3] / scaled_anchors[best_a_idx][1])
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 4] = 1
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 5 + batch_tensor[i, 4].long()] = 1
-                        box_loss_scale[batch_idx, aim_a_idx, grid_y, grid_x] = batch_label[i, 2] * batch_label[i, 3]
+                        box_loss_scale[batch_idx, aim_a_idx, grid_y, grid_x] = batch_label[i, 2] * batch_label[
+                            i, 3] / f_w / f_h
                         # set positive samples
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, -1] = 1
                     elif iou_plural[i][a_id] < self.opts.anchors_thresh and a_id in ANCHORS_MASK[level]:
@@ -102,7 +103,7 @@ class YoloV3Loss(nn.Module):
         """
         conf_loss_func = nn.BCELoss(reduction='none')
         xy_loss_func = nn.BCELoss(reduction='none')
-        wh_loss_func = nn.BCELoss(reduction='none')
+        wh_loss_func = nn.MSELoss(reduction='none')
         cls_loss_func = nn.BCEWithLogitsLoss(reduction='none')
 
         batch_size, _, f_w, f_h = pred.size()
@@ -116,8 +117,8 @@ class YoloV3Loss(nn.Module):
 
         tx = torch.sigmoid(pred[..., 0])
         ty = torch.sigmoid(pred[..., 1])
-        tw = torch.sigmoid(pred[..., 2])
-        th = torch.sigmoid(pred[..., 3])
+        tw = pred[..., 2]
+        th = pred[..., 3]
 
         pred_conf = torch.sigmoid(pred[..., 4])
         pred_cls = pred[..., 5:]
@@ -140,17 +141,17 @@ class YoloV3Loss(nn.Module):
         # coordinate offset loss
         loss_tx = torch.mean(
             xy_loss_func(tx, gt_tensor[..., 0]) * (
-                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
+                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
         loss_ty = torch.mean(
             xy_loss_func(ty, gt_tensor[..., 1]) * (
-                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
+                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
 
         loss_tw = torch.mean(
             wh_loss_func(tw, gt_tensor[..., 2]) * (
-                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
+                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
         loss_th = torch.mean(
             wh_loss_func(th, gt_tensor[..., 3]) * (
-                        gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
+                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
 
         loss_cls = torch.mean(
             cls_loss_func(pred_cls, gt_tensor[..., 5:-1]) * (gt_tensor[..., -1] == 1).float().unsqueeze(-1))

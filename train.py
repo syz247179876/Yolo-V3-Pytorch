@@ -39,7 +39,8 @@ class YoloV3Train(object):
                 # calculate loss of different feature level
                 cur_loss = torch.tensor(0).float().to(self.opts.gpu_id)
                 for idx, output in enumerate(pred):
-                    cur_loss += loss_obj(idx, output, labels)
+                    temp = loss_obj(idx, output, labels)
+                    cur_loss += temp
                 optimizer.zero_grad()
                 cur_loss.backward()
                 optimizer.step()
