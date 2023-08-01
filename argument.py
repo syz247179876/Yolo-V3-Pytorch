@@ -55,7 +55,7 @@ class Args(object):
                                  help='store the latest model file')
         self.parser.add_argument('--random_seed', type=int, default=42)
         self.parser.add_argument('--print_frequency', type=int, default=60, help='print interval')
-        self.parser.add_argument('--save_frequency', type=int, default=3, help='store model interval')
+        self.parser.add_argument('--save_frequency', type=int, default=2, help='store model interval')
         self.parser.add_argument('--checkpoints_dir', type=str, default=r'./checkpoints_dir', help='store the model')
         self.parser.add_argument('--shuffle', action='store_true', default=True)
         self.parser.add_argument('--drop_last', action='store_true', default=True)
@@ -64,7 +64,7 @@ class Args(object):
         self.parser.add_argument('--end_epoch', type=int, default=100)
 
         # loss weight
-        self.parser.add_argument('--coord_weight', type=float, default=1.)
+        self.parser.add_argument('--coord_weight', type=float, default=0.5)
         self.parser.add_argument('--no_obj_weight', type=float, default=1.)
 
         self.parser.add_argument('--decrease_interval', type=int, default=30,

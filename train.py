@@ -74,7 +74,7 @@ class YoloV3Train(object):
         learning rate decrease five times every 30 epoch
         """
         max_lr = self.opts.lr_max
-        min_lr = self.opts.lr_max
+        min_lr = self.opts.lr_min
         batch_size = self.opts.batch_size
         lr = min(max(batch_size / 64 * self.opts.lr_base, min_lr), max_lr)
         return lr

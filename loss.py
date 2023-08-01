@@ -22,6 +22,7 @@ class YoloV3Loss(nn.Module):
         self.opts = args_train.opts
         self.use_gpu = args_train.opts.use_gpu
         self.gpu_id = args_train.opts.gpu_id
+        self.balance = [0.4, 1.0, 4]
 
     def generator_labels(
             self,
@@ -156,8 +157,9 @@ class YoloV3Loss(nn.Module):
         loss_cls = torch.mean(
             cls_loss_func(pred_cls, gt_tensor[..., 5:-1]) * (gt_tensor[..., -1] == 1).float().unsqueeze(-1))
         loss_conf = torch.mean(
-            conf_loss_func(pred_conf, gt_tensor[..., 4]) * (gt_tensor[..., -1] == 1).float())
+            conf_loss_func(pred_conf, gt_tensor[..., 4]) * (gt_tensor[..., -1] == 1).float()) * self.balance[level]
         no_obj_loss_conf = torch.mean(
-            conf_loss_func(pred_conf, gt_tensor[..., 4]) * (gt_tensor[..., -1] == -1).float())
+            conf_loss_func(pred_conf, torch.zeros_like(pred_conf)) * (gt_tensor[..., -1] == -1).float()) * self.balance[
+                               level]
         avg_loss += loss_tx + loss_ty + loss_tw + loss_th + loss_cls + loss_conf + no_obj_loss_conf
         return avg_loss
