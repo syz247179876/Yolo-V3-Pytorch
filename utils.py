@@ -1,7 +1,8 @@
 import typing as t
 import torch
 import numpy as np
-from PIL import Image
+import colorsys
+from PIL import Image, ImageFont
 from colorama import Fore
 
 
@@ -96,7 +97,7 @@ def print_log(txt: str, color: t.Any = Fore.GREEN):
     print(color, txt)
 
 
-def detection_collate(batch: t.Iterable[t.Tuple]):
+def detection_collate(batch: t.Iterable[t.Tuple]) -> t.Tuple[torch.Tensor, t.List, t.List]:
     """
     custom collate func for dealing with batches of images that have a different number
     of object annotations (bbox).
@@ -106,10 +107,12 @@ def detection_collate(batch: t.Iterable[t.Tuple]):
 
     labels = []
     images = []
-    for img, label in batch:
+    img_paths = []
+    for img, label, img_path in batch:
         images.append(img)
         labels.append(label)
-    return torch.stack(images, dim=0), labels
+        img_paths.append(img_path)
+    return torch.stack(images, dim=0), labels, img_paths
 
 
 class ImageAugmentation(object):
@@ -249,7 +252,27 @@ class ComputeMAP(object):
         return recall.tolist(), precision.tolist()
 
 
+def set_font_thickness(font_filename: str, size: int, thickness: int):
+    """
+    set font and thickness of draw
+    """
+    font = ImageFont.truetype(font=font_filename, size=size)
+    thickness = max(thickness, 1)
+    return font, thickness
+
+
+def generate_colors(classes_num: int) -> t.List:
+    """
+    generate different kinds of color according to class num
+    """
+    hsv_tuples = [(x / classes_num, 1., 1.) for x in range(classes_num)]
+    colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
+    colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), colors))
+    return colors
+
+
 if __name__ == "__main__":
     file_path = r'C:\Users\24717\Projects\pascal voc2012\VOCdevkit\VOC2012\JPEGImages\2007_000032.jpg'
     image_ = Image.open(file_path)
+    print(image_.size)
     image_.show()

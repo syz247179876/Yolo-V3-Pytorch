@@ -76,9 +76,9 @@ class VOCDataset(Dataset):
         return len(self.use_img_path)
 
     def __getitem__(self, item):
-        img, label, _, _ = self.pull_item(item)
+        img, label, _, _, img_path = self.pull_item(item)
 
-        return img, label
+        return img, label, img_path
 
     def train_data(self):
         self.use_img_path = self.img_list[: int(len(self.img_list) * self.train_test_ratio)]
@@ -89,7 +89,7 @@ class VOCDataset(Dataset):
     def test_data(self):
         self.use_img_path = self.img_list[int(len(self.img_list) * self.train_test_ratio):]
 
-    def pull_item(self, index: int) -> t.Tuple[torch.Tensor, torch.Tensor, int, int]:
+    def pull_item(self, index: int) -> t.Tuple[torch.Tensor, torch.Tensor, int, int, str]:
         img_id = self.img_list[index]
         img_path: str = os.path.join(self.img_dir, img_id)
         img = cv2.imread(img_path)
@@ -103,4 +103,4 @@ class VOCDataset(Dataset):
         img = torch.tensor(img)
         img = img.permute(2, 0, 1).float()  # (height, width, channels) -> (channels, height, width)
         target = torch.tensor(target)
-        return img, target, height, width
+        return img, target, height, width, img_path

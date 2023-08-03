@@ -29,7 +29,7 @@ class YoloV3Train(object):
     ) -> None:
         total_loss = 0
         with open(os.path.join(self.opts.checkpoints_dir, 'log.txt'), 'a+') as log_f:
-            for batch, (x, labels) in enumerate(train_loader):
+            for batch, (x, labels, _) in enumerate(train_loader):
 
                 if self.opts.use_gpu:
                     x = x.to(self.opts.gpu_id)
