@@ -146,6 +146,109 @@ class Normalization(object):
         return images, boxes
 
 
+class ComputeMAP(object):
+    """
+    compute map
+    """
+
+    def __init__(self, iou_thresh: float = 0.5):
+        self.iou_thresh = iou_thresh
+
+    def calculate_tp(
+            self,
+            pred_coord: torch.Tensor,
+            pred_score: torch.Tensor,
+            gt_coord: torch.Tensor,
+            gt_difficult: torch.Tensor,
+    ) -> t.Tuple[int, t.List, t.List]:
+        """
+
+        calculate tp/fp for all predicted bboxes for one class of one image.
+
+        Input:
+            pred_coord: Tensor -> [N, 4], coordinates of all prediction boxes for a certain category
+                        in a certain image(x0, y0, x1, y1)
+            pred_score: Tensor -> [N, 1], score(confidence) of all prediction boxes for a certain category
+                        in a certain image
+            gt_coord: Tensor -> [M, 4], coordinates of all prediction boxes for a certain category
+                        in a certain image(x0, y0, x1, y1)
+            gt_difficult: Tensor -> [M, 1] -> whether the value of gt box of a certain category
+                        in a certain image is difficult target?
+            iou_thresh: the threshold to split TP and FP/FN.
+
+        Output:
+            gt_num: the number of gt box for a certain category in a certain image
+            tp_list:
+            conf_list:
+        """
+
+        not_difficult_gt_mask = torch.LongTensor(gt_difficult == 0)
+        gt_num = not_difficult_gt_mask.sum()
+        if gt_num == 0 or gt_coord.numel() == 0:
+            return 0, [], []
+
+        if pred_coord.numel() == 0:
+            return len(gt_coord), [], []
+
+        # compute iou of gt-box and pred-box
+        gt_size, pred_size = gt_coord.size(0), pred_coord.size(0)
+
+        inter_t_l = torch.max(gt_coord[..., :2].unsqueeze(1).expand(gt_size, pred_size, 2),
+                              pred_coord[..., :2].unsqueeze(0).expand(gt_size, pred_size, 2))
+        inter_b_r = torch.min(gt_coord[..., 2:].unsqueeze(1).expand(gt_size, pred_size, 2),
+                              pred_coord[..., 2:].unsqueeze(0).expand(gt_size, pred_size, 2))
+        inter = torch.clamp(inter_b_r - inter_t_l, min=0)
+        inter = inter[..., 0] * inter[..., 1]
+
+        area_gt = ((gt_coord[..., 2] - gt_coord[..., 0]) * (gt_coord[..., 3] - gt_coord[..., 2])).unsqueeze(
+            1).expand_as(inter)
+        area_pred = ((pred_coord[..., 2] - pred_coord[..., 0]) * (pred_coord[..., 3] - pred_coord[..., 2])).unsqueeze(
+            1).expand_as(inter)
+
+        iou_plural = inter / (area_pred + area_gt - inter + 1e-20)
+
+        max_iou_val, max_iou_idx = torch.max(iou_plural, dim=0)
+
+        # remove/ignore difficult gt box and the corresponding pred iou
+        not_difficult_pb_mask = iou_plural[not_difficult_gt_mask].max(dim=0)[0] == max_iou_val
+        max_iou_val, max_iou_idx = max_iou_val[not_difficult_pb_mask], max_iou_idx[not_difficult_pb_mask]
+        if max_iou_idx.numel() == 0:
+            return gt_num, [], []
+
+        # for different bboxes that match to the same gt, set the highest score tp=1, and the other tp=0
+        # score = conf * iou
+        conf = pred_score.view(-1)[not_difficult_pb_mask]
+        tp_list = torch.zeros_like(max_iou_val)
+        for i in max_iou_idx[max_iou_val > self.iou_thresh].unique():
+            gt_mask = (max_iou_val > self.iou_thresh) * (max_iou_idx == i)
+            idx = (conf * gt_mask.float()).argmax()
+            tp_list[idx] = 1
+        return gt_num, tp_list.tolist(), conf.tolist()
+
+    def calculate_pr(self, gt_num: int, tp_list: t.List, confidence_score: t.List) -> t.Tuple[t.List, t.List]:
+        """
+        calculate p-r according to gt number and tp_list for a certain category in a certain image
+        """
+        if gt_num == 0 or len(tp_list) == 0 or len(confidence_score) == 0:
+            return [0], [0]
+        if isinstance(tp_list, (tuple, list)):
+            tp_list = np.array(tp_list)
+        if isinstance(confidence_score, (tuple, list)):
+            confidence_score = np.array(confidence_score)
+
+        assert len(tp_list) == len(confidence_score), 'the length of tp_list is not equal to that in confidence score'
+
+        # sort from max to min
+        sort_mask = np.argsort(-confidence_score)
+        tp_list = tp_list[sort_mask]
+
+        # x = [1,3,1,2,5] -> np.cumsum(x) -> [1,4,5,7,12] ==> prefix sum
+        recall = np.cumsum(tp_list) / gt_num
+        precision = np.cumsum(tp_list) / (np.arange(len(tp_list)) + 1)
+
+        return recall.tolist(), precision.tolist()
+
+
 if __name__ == "__main__":
     file_path = r'C:\Users\24717\Projects\pascal voc2012\VOCdevkit\VOC2012\JPEGImages\2007_000032.jpg'
     image_ = Image.open(file_path)

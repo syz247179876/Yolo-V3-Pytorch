@@ -10,10 +10,9 @@ from settings import *
 
 class DecodeFeature(object):
 
-    def __init__(self, img_size: int, classes_num: int, anchors_num: int):
+    def __init__(self, img_size: int, classes_num: int):
         super(DecodeFeature, self).__init__()
         self.classes_num = classes_num
-        self.anchors_num = anchors_num
         self.img_size = img_size
 
     def generator_xy_wh(
@@ -55,7 +54,7 @@ class DecodeFeature(object):
 
             note: 4 -> [bx, by, bw, bn] are bbox's actual coordinate
         """
-        output = []
+        outputs = []
         for idx, pred in enumerate(inputs):
             pred: torch.Tensor
             batch_size, _, g_h, g_w = pred.size()
@@ -87,12 +86,22 @@ class DecodeFeature(object):
             pred[..., :2] = b_xy
             pred[..., 2] = b_w
             pred[..., 3] = b_h
-            output.append(pred)
-        return output
+
+            # normalize the results to decimals
+            scale = torch.tensor([g_w, g_h, g_w, g_h])
+            output = torch.cat((pred[..., :4] / scale, pred[..., 4], pred[..., 5]), dim=-1)
+            outputs.append(output)
+        return outputs
+
+    def execute_nms(self):
+        """
+        NMS
+        """
+        pass
 
 
 if __name__ == "__main__":
-    d = DecodeFeature(416, 20, 3)
+    d = DecodeFeature(416, 20)
     in_p = [torch.randn(4, 75, 13, 13), torch.randn(4, 75, 26, 26), torch.randn(4, 75, 52, 52)]
     res = d.decode_pred(in_p)
     print(res[0].size(), res[1].size(), res[2].size())
