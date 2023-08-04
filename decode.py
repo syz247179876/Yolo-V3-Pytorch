@@ -8,6 +8,7 @@ import typing as t
 from torchvision.ops import nms
 from argument import args_test
 from settings import *
+from utils import revert_img_box
 
 
 class DecodeFeature(object):
@@ -40,9 +41,9 @@ class DecodeFeature(object):
         else:
             # method two:
             grid_x = torch.linspace(0, grid_h - 1, grid_h).repeat(grid_h, 1). \
-                repeat(batch_size * ANCHORS_NUM, 1).view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1)
-            grid_y = torch.linspace(0, grid_w - 1, grid_w).repeat(grid_w, 1). \
-                repeat(batch_size * ANCHORS_NUM, 1).t().view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1)
+                repeat(batch_size * ANCHORS_NUM, 1, 1).view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1)
+            grid_y = torch.linspace(0, grid_w - 1, grid_w).repeat(grid_w, 1).t(). \
+                repeat(batch_size * ANCHORS_NUM, 1, 1).view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1)
             # dimension -> [B, anchors_nums, 13, 13, 2], if down sample multiple is 32
             grid_xy = torch.cat((grid_x, grid_y), dim=-1)
         return grid_xy
@@ -55,7 +56,7 @@ class DecodeFeature(object):
         Output:
             Tensor -> [B, self.anchors_num, height, width, (1 + 4 + self.class_num)
 
-            note: 4 -> [bx, by, bw, bn] are bbox's actual coordinate
+            note: 4 -> [bx, by, bw, bn] are bbox's actual coordinate according to grid cell
         """
         outputs = []
         for idx, pred in enumerate(inputs):
@@ -68,6 +69,7 @@ class DecodeFeature(object):
             scaled_anchors = [(anchor_w / stride_w, anchor_h / stride_h) for anchor_w, anchor_h in ANCHORS[idx]]
 
             # trans structure to [B, self.anchor, height, width, (1 + 4 + self.class_num)]
+
             pred = pred.view(batch_size, ANCHORS_NUM, 4 + 1 + self.classes_num, g_h, g_w). \
                 permute(0, 1, 3, 4, 2).contiguous()
 
@@ -75,7 +77,7 @@ class DecodeFeature(object):
             long_ = torch.cuda.LongTensor if pred.is_cuda else torch.LongTensor
 
             # compute bx, by, bw, bh
-            grid_xy = self.generator_xy(g_h, g_w, batch_size)
+            grid_xy = self.generator_xy(g_h, g_w, batch_size, method=0)
             if pred.is_cuda:
                 grid_xy = grid_xy.to(self.opts.gpu_id)
             b_xy = torch.sigmoid(pred[..., :2]) + grid_xy
@@ -85,19 +87,22 @@ class DecodeFeature(object):
                 repeat(1, 1, g_h * g_w).view(pw.size())
             anchor_h = float_(scaled_anchors).index_select(1, long_([1])).repeat(batch_size, 1). \
                 repeat(1, 1, g_h * g_w).view(ph.size())
-            b_w = torch.exp(pred[..., 2]) * anchor_w
-            b_h = torch.exp(pred[..., 3]) * anchor_h
+            b_w = torch.exp(pw) * anchor_w
+            b_h = torch.exp(ph) * anchor_h
 
             pred[..., :2] = b_xy
             pred[..., 2] = b_w
             pred[..., 3] = b_h
 
             # normalize the results to decimals
-            scale = torch.tensor([g_w, g_h, g_w, g_h])
+            scale = torch.FloatTensor([g_w, g_h, g_w, g_h])
             if pred.is_cuda:
                 scale = scale.to(self.opts.gpu_id)
             # concat bx, by, bw, bh, conf, cls
-            output = torch.cat((pred[..., :4].view(batch_size, -1, 4) / scale, pred[..., 4].view(batch_size, -1, 1),
+            # css = pred[..., :4].view(batch_size, -1, 4)
+            # csss = css / scale
+            output = torch.cat((pred[..., :4].view(batch_size, -1, 4) / scale,
+                                torch.sigmoid(pred[..., 4]).view(batch_size, -1, 1),
                                 pred[..., 5:].view(batch_size, -1, self.classes_num)), dim=-1)
             outputs.append(output)
         return outputs
@@ -105,6 +110,9 @@ class DecodeFeature(object):
     def execute_nms(
             self,
             predictions: torch.Tensor,
+            image_shapes: t.List[t.Tuple],
+            letterbox_image: bool,
+            input_shape: t.Tuple = INPUT_SHAPE,
     ) -> t.List[np.ndarray]:
         """
         NMS
@@ -120,21 +128,23 @@ class DecodeFeature(object):
         """
         # pred has the same device and shape as predictions
         pred = predictions.new(predictions.size())
+        # ccs = predictions[..., 2:4]
         pred[..., 0] = predictions[..., 0] - predictions[..., 2] / 2
         pred[..., 2] = predictions[..., 0] + predictions[..., 2] / 2
         pred[..., 1] = predictions[..., 1] - predictions[..., 3] / 2
         pred[..., 3] = predictions[..., 1] + predictions[..., 3] / 2
+        predictions[:, :, :4] = pred[:, :, :4]
 
         outputs: t.List[t.Optional[torch.Tensor]] = [None for _ in range(pred.size(0))]
-        for batch_size, image_pred in enumerate(predictions):
-            batch_size: int
+        for idx, image_pred in enumerate(predictions):
+            idx: int
             image_pred: torch.Tensor
             # dimension -> [anchor_num * g_h * g_w, 1]
             max_cls_conf, max_cls_idx = torch.max(image_pred[:, 5: 5 + self.classes_num], dim=1, keepdim=True)
 
             # first filter ----- confidence filter
             # score = conf * cls
-            conf_mask = (image_pred[:, 4] * max_cls_conf[:, 0] >= self.opts.conf_thresh)
+            conf_mask = (image_pred[:, 4] * max_cls_conf[:, 0] >= self.opts.conf_thresh).squeeze()
             image_pred = image_pred[conf_mask]
             max_cls_conf = max_cls_conf[conf_mask]
             max_cls_idx = max_cls_idx[conf_mask]
@@ -152,11 +162,14 @@ class DecodeFeature(object):
                            pred_box[:, 4] * pred_box[:, 5],
                            self.opts.iou_thresh)
                 best_pred = filter_pred[keep]
-                outputs[batch_size] = best_pred if outputs[batch_size] is None else outputs[batch_size].cat(
-                    (outputs[batch_size], best_pred))
-            if outputs[batch_size] is not None:
-                outputs[batch_size] = outputs[batch_size].cpu().numpy()
-                # TODO: 将bbox坐标从shape(416x416) 转回原始图像尺寸
+
+                outputs[idx] = best_pred if outputs[idx] is None else torch.concat((outputs[idx], best_pred))
+            if outputs[idx] is not None:
+                outputs[idx] = outputs[idx].cpu().numpy()
+                box_xy, box_wh = (outputs[idx][:, 0: 2] + outputs[idx][:, 2: 4]) / 2, \
+                                 outputs[idx][:, 2: 4] - outputs[idx][:, 0: 2]
+                outputs[idx][:, :4] = revert_img_box(box_xy, box_wh, image_shapes[idx],
+                                                     input_shape, letterbox_image)
         return outputs
 
 

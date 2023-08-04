@@ -38,7 +38,7 @@ class Args(object):
                                  default=r'C:\Users\24717\Projects\pascal voc2012\VOCdevkit\VOC2012',
                                  help='the base dir of dataset'
                                  )
-        self.parser.add_argument('--anchors_thresh', type=float, default=0.6,
+        self.parser.add_argument('--anchors_thresh', type=float, default=0.5,
                                  help='threshold for selecting positive sample anchors'
                                  )
         self.parser.add_argument('--epoch', type=int, default=0, help='the epoch of current training')
@@ -89,9 +89,9 @@ class Args(object):
         self.parser.add_argument('--drop_last', action='store_true', default=True)
         self.parser.add_argument('--pretrain_file', type=str, default='./checkpoints_dir/epoch98.pkl',
                                  help='store the latest model file')
-        self.parser.add_argument('--conf_thresh', type=float, default=0.5,
+        self.parser.add_argument('--conf_thresh', type=float, default=0.0,
                                  help='filter the bbox which confidence less than confidence threshold')
-        self.parser.add_argument('--iou_thresh', type=float, default=0.3,
+        self.parser.add_argument('--iou_thresh', type=float, default=0.0,
                                  help='apply to NMS, filter the bbox which iou greater than iou threshold')
 
         self.opts = self.parser.parse_args()

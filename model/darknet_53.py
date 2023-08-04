@@ -170,14 +170,14 @@ class Darknet53(nn.Module):
         # the first layer feature fusion
         x1_fusion = self.final_filter_conv_1(out_1_branch)
         x1_fusion = self.up_sample_1(x1_fusion)
-        x1_fusion = torch.cat((x2, x1_fusion), dim=1)
+        x1_fusion = torch.cat((x1_fusion, x2), dim=1)
 
         out_2_branch = self.final_filter_2[:5](x1_fusion)  # 26x26x256
         x2 = self.final_filter_2[5:](out_2_branch)  # 26x26x75 or 26x26x255
         # the second layer feature fusion
         x2_fusion = self.final_filter_conv_2(out_2_branch)
         x2_fusion = self.up_sample_2(x2_fusion)
-        x2_fusion = torch.cat((x3, x2_fusion), dim=1)
+        x2_fusion = torch.cat((x2_fusion, x3), dim=1)
 
         x3 = self.final_filter_3(x2_fusion)  # 52x52x75 or 52x52x255
 

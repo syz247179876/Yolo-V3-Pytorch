@@ -26,7 +26,7 @@ class VOCDecodeTransform(object):
     def __call__(self, root: ET.Element, width: int, height: int) -> np.ndarray:
         """
         Output:
-            np.ndarray -> [[x_mid, y_mid, b_w, b_h, cls_id], [...],]
+            np.ndarray -> [[x_min, y_min, x_max, y_max, cls_id], [...],]
         """
         res = []
 
@@ -42,7 +42,7 @@ class VOCDecodeTransform(object):
             y_min = int(float(bbox_node.find('ymin').text))
             x_max = int(float(bbox_node.find('xmax').text))
             y_max = int(float(bbox_node.find('ymax').text))
-            bbox = [(x_max - x_min) / 2, (y_max - y_min) / 2, x_max - x_min, y_max - y_min, self.class_idx[cls]]
+            bbox = [x_min, y_min, x_max, y_max, self.class_idx[cls]]
             res.append(bbox)
         return np.array(res)
 
@@ -76,9 +76,9 @@ class VOCDataset(Dataset):
         return len(self.use_img_path)
 
     def __getitem__(self, item):
-        img, label, _, _, img_path = self.pull_item(item)
+        img, label, _, _, img_path, image_shape = self.pull_item(item)
 
-        return img, label, img_path
+        return img, label, img_path, image_shape
 
     def train_data(self):
         self.use_img_path = self.img_list[: int(len(self.img_list) * self.train_test_ratio)]
@@ -89,7 +89,7 @@ class VOCDataset(Dataset):
     def test_data(self):
         self.use_img_path = self.img_list[int(len(self.img_list) * self.train_test_ratio):]
 
-    def pull_item(self, index: int) -> t.Tuple[torch.Tensor, torch.Tensor, int, int, str]:
+    def pull_item(self, index: int) -> t.Tuple[torch.Tensor, torch.Tensor, int, int, str, t.Tuple[int, int]]:
         img_id = self.img_list[index]
         img_path: str = os.path.join(self.img_dir, img_id)
         img = cv2.imread(img_path)
@@ -103,4 +103,5 @@ class VOCDataset(Dataset):
         img = torch.tensor(img)
         img = img.permute(2, 0, 1).float()  # (height, width, channels) -> (channels, height, width)
         target = torch.tensor(target)
-        return img, target, height, width, img_path
+        image_shape = (width, height)
+        return img, target, height, width, img_path, image_shape

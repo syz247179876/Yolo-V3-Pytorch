@@ -24,6 +24,10 @@ class YoloV3Loss(nn.Module):
         self.gpu_id = args_train.opts.gpu_id
         self.balance = [0.4, 1.0, 4]
 
+        self.box_ratio = 0.05
+        self.obj_ratio = 5 * (input_shape[0] * input_shape[1]) / (416 ** 2)
+        self.cls_ratio = 1 * (5 + self.classes_num) / 80
+
     def generator_labels(
             self,
             level: int,
@@ -36,7 +40,7 @@ class YoloV3Loss(nn.Module):
         divide positive labels, negative labels, ignore labels
 
         Input:
-            labels: torch.Tensor[torch.Tensor] -> [[[x_min, y_min, x_max, y_max], ...], [], []]
+            labels: List[torch.Tensor] -> [[[x_min, y_min, x_max, y_max, cls_id], ...], [], []]
             x_min, y_min, x_max, y_max has been normalized
         """
         batch_size = len(labels)
@@ -72,9 +76,9 @@ class YoloV3Loss(nn.Module):
             for i, a_idxes in enumerate(iou_plural):
                 # best anchor not in the anchors relative to the current level feature map
                 best_a_idx = best_iou_plural[i]
+                grid_x = torch.floor(batch_tensor[i, 0]).long()
+                grid_y = torch.floor(batch_tensor[i, 1]).long()
                 for a_id in range(len(a_idxes)):
-                    grid_x = torch.floor(batch_tensor[i, 0]).long()
-                    grid_y = torch.floor(batch_tensor[i, 1]).long()
                     if a_id == best_a_idx and best_a_idx in ANCHORS_MASK[level]:
                         # access best anchor by using ANCHORS_MASK[level][aim_a_idx], 0 <= aim_a_dix <= 2
                         aim_a_idx = ANCHORS_MASK[level].index(best_a_idx)
@@ -105,9 +109,9 @@ class YoloV3Loss(nn.Module):
         conf_loss_func = nn.BCELoss(reduction='none')
         xy_loss_func = nn.BCELoss(reduction='none')
         wh_loss_func = nn.MSELoss(reduction='none')
-        cls_loss_func = nn.BCEWithLogitsLoss(reduction='none')
+        cls_loss_func = nn.BCELoss(reduction='none')
 
-        batch_size, _, f_w, f_h = pred.size()
+        batch_size, _, f_h, f_w = pred.size()
         stride_h = self.input_shape[0] / f_h
         stride_w = self.input_shape[1] / f_w
 
@@ -122,7 +126,7 @@ class YoloV3Loss(nn.Module):
         th = pred[..., 3]
 
         pred_conf = torch.sigmoid(pred[..., 4])
-        pred_cls = pred[..., 5:]
+        pred_cls = torch.sigmoid(pred[..., 5:])
 
         gt_tensor, box_loss_scale = self.generator_labels(level, labels, scaled_anchors, f_h, f_w)
         avg_loss = torch.tensor(0.)
@@ -161,5 +165,6 @@ class YoloV3Loss(nn.Module):
         no_obj_loss_conf = torch.mean(
             conf_loss_func(pred_conf, torch.zeros_like(pred_conf)) * (gt_tensor[..., -1] == -1).float()) * self.balance[
                                level]
-        avg_loss += loss_tx + loss_ty + loss_tw + loss_th + loss_cls + loss_conf + no_obj_loss_conf
+        avg_loss += (loss_tx + loss_ty + loss_tw + loss_th) * self.box_ratio + loss_cls * self.cls_ratio + \
+                    (loss_conf + no_obj_loss_conf) * self.obj_ratio
         return avg_loss

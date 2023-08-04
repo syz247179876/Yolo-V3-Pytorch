@@ -1,3 +1,4 @@
+import os.path
 import time
 import typing as t
 import numpy as np
@@ -10,7 +11,7 @@ from argument import args_test
 from data.voc_data import VOCDataset
 from decode import DecodeFeature
 from loss import YoloV3Loss
-from settings import VOC_CLASSES
+from settings import VOC_CLASSES, INPUT_SHAPE
 from utils import detection_collate, print_log, set_font_thickness, generate_colors
 
 
@@ -32,7 +33,7 @@ class YoloV3Test(object):
         self.colors = generate_colors(classes_num)
 
     def main(self):
-        test_dataset = VOCDataset(mode='test')
+        test_dataset = VOCDataset(mode='train')
         test_loader = DataLoader(
             test_dataset,
             batch_size=self.opts.batch_size,
@@ -51,7 +52,7 @@ class YoloV3Test(object):
 
         loss_obj = YoloV3Loss()
         total_loss = 0.
-        for batch, (x, labels, img_paths) in enumerate(test_loader):
+        for batch, (x, labels, img_paths, image_shapes) in enumerate(test_loader):
             with torch.no_grad():
                 if self.opts.use_gpu:
                     x = x.to(self.opts.gpu_id)
@@ -70,10 +71,16 @@ class YoloV3Test(object):
                 decoded_pred: t.List = self.decode.decode_pred(pred)
                 results: t.List = self.decode.execute_nms(
                     torch.cat(decoded_pred, dim=1),
+                    image_shapes,
+                    self.letterbox_image
                 )
 
                 # set font and frame
-                font, thickness = set_font_thickness()
+                font_path = os.path.join(os.path.dirname(__file__), r'static/font/simhei.ttf')
+                thickness = (image_shapes // np.mean(INPUT_SHAPE)).flatten()
+                font, thickness = set_font_thickness(font_path,
+                                                     np.floor(3e-2 * image_shapes[batch][1] + 0.5).astype('int32'),
+                                                     thickness)
 
                 top_cls_idx = np.array([result[:, 6] for result in results], dtype='int32')
                 top_score = np.array([result[:, 4] * result[:, 5] for result in results], dtype='float')
@@ -87,6 +94,8 @@ class YoloV3Test(object):
                     boxes: np.ndarray
                     img_path: str
                     cur_img = Image.open(img_path)
+                    width, height = cur_img.size
+
                     for i, s, b in zip(cls_idx, score, boxes):
                         pred_cls_name = VOC_CLASSES[int(i)]
                         top, left, bottom, right = b
@@ -103,12 +112,15 @@ class YoloV3Test(object):
                             text_origin = np.array((left, top - label_size[1]))
                         else:
                             text_origin = np.array((left, top + 1))
-                        for step in range(thickness):
-                            draw.rectangle((left + step, top + step, right - step, bottom - step),
-                                           outline=self.colors[i])
-                        draw.rectangle((tuple(text_origin), tuple(text_origin + label_size)), fill=self.colors[i])
-                        draw.text(tuple(text_origin), label, fill=(0, 0, 0), font=font)
-                        del draw
+                        if height > top > 0 and width > left > 0 and height > bottom > 0 and width > right > 0:
+                            for step in range(thickness):
+                                draw.rectangle((left + step, top + step, right - step, bottom - step),
+                                               outline=self.colors[i])
+                            draw.rectangle((tuple(text_origin), tuple(text_origin + label_size)), fill=self.colors[i])
+                            draw.text(tuple(text_origin), label, fill=(0, 0, 0), font=font)
+                            del draw
+                        # cv2.imshow("bbox", np.array(cur_img))
+                        # cv2.waitKey(0)
                     cur_img.show()
 
         avg_loss = total_loss / (len(test_loader) + 1)

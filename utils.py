@@ -48,6 +48,47 @@ def resize_img_box(
     return np.array(new_image, np.float32), labels
 
 
+def revert_img_box(
+        box_xy: np.ndarray,
+        box_wh: np.ndarray,
+        image_shape: t.Tuple,
+        input_shape: t.Tuple,
+        letterbox_image: bool = True
+):
+    """
+        Before training, we resized the image shape to input shape, and their gt boxes, then send it to model.
+    because we never save the image that preprocessed, so, while we infer, we should revert the resized image
+    to it original shape, and adjust the size of prediction boxes.
+
+    Output:
+        box_xy: x and y are center point of the box, its value between [0, 1], dimension -> [num1, 2],
+            nums1 <= anchor_num * g_h * g_w
+        image_shape: original shape of image
+        input_shape: resized shape of image, such as 416x416
+        letterbox_image: is the image distorted
+    """
+    input_shape = np.array(input_shape)
+    image_shape = np.array(image_shape)
+
+    if letterbox_image:
+        scale = np.min(input_shape / image_shape)
+        new_shape = np.round(image_shape * np.min(input_shape / image_shape))
+        # this offset is the offset of the effective area of the image according to the top-left corner of the image.
+        # you can draw in your draft paper to understand
+        # remember offset should be normalized, as the box_xy and box_wh are be normalized!
+        offset = (input_shape - new_shape) / 2.0 / input_shape
+        # scale = input_shape / new_shape
+
+        box_xy = (box_xy - offset) / scale
+        box_wh /= scale
+    box_t_l = box_xy - box_wh / 2.
+    box_b_r = box_xy + box_wh / 2.
+    boxes = np.concatenate([box_t_l[..., 0: 1], box_t_l[..., 1: 2], box_b_r[..., 0: 1], box_b_r[..., 1: 2]], axis=-1)
+    boxes *= np.concatenate((image_shape, image_shape), axis=-1)
+
+    return boxes
+
+
 def compute_iou_gt_anchors(
         gt_boxes: torch.Tensor,
         anchor_boxes: torch.Tensor,
@@ -97,7 +138,7 @@ def print_log(txt: str, color: t.Any = Fore.GREEN):
     print(color, txt)
 
 
-def detection_collate(batch: t.Iterable[t.Tuple]) -> t.Tuple[torch.Tensor, t.List, t.List]:
+def detection_collate(batch: t.Iterable[t.Tuple]) -> t.Tuple[torch.Tensor, t.List, t.List, t.List]:
     """
     custom collate func for dealing with batches of images that have a different number
     of object annotations (bbox).
@@ -108,11 +149,13 @@ def detection_collate(batch: t.Iterable[t.Tuple]) -> t.Tuple[torch.Tensor, t.Lis
     labels = []
     images = []
     img_paths = []
-    for img, label, img_path in batch:
+    img_shapes = []
+    for img, label, img_path, img_shape in batch:
         images.append(img)
         labels.append(label)
         img_paths.append(img_path)
-    return torch.stack(images, dim=0), labels, img_paths
+        img_shapes.append(img_shape)
+    return torch.stack(images, dim=0), labels, img_paths, img_shapes
 
 
 class ImageAugmentation(object):
@@ -143,9 +186,14 @@ class Normalization(object):
         2. for boxes, the center of the box divided by the width and height of the entire image
         """
         images = images / 255.0
+        boxes = boxes.astype(np.float32)
         if len(boxes):
             boxes[:, [0, 2]] = boxes[:, [0, 2]] / self.img_shape[1]
             boxes[:, [1, 3]] = boxes[:, [1, 3]] / self.img_shape[0]
+
+            # trans to mid_x, mid_y, w, h
+            boxes[:, 2: 4] = boxes[:, 2: 4] - boxes[:, 0: 2]
+            boxes[:, 0: 2] = boxes[:, 0: 2] + boxes[:, 2: 4] / 2
         return images, boxes
 
 
@@ -252,12 +300,12 @@ class ComputeMAP(object):
         return recall.tolist(), precision.tolist()
 
 
-def set_font_thickness(font_filename: str, size: int, thickness: int):
+def set_font_thickness(font_filename: str, size: int, thickness: t.Tuple[int]):
     """
     set font and thickness of draw
     """
     font = ImageFont.truetype(font=font_filename, size=size)
-    thickness = max(thickness, 1)
+    thickness = int(max(*thickness, 1))
     return font, thickness
 
 
