@@ -33,7 +33,7 @@ class YoloV3Test(object):
         self.colors = generate_colors(classes_num)
 
     def main(self):
-        test_dataset = VOCDataset(mode='train')
+        test_dataset = VOCDataset(mode='test')
         test_loader = DataLoader(
             test_dataset,
             batch_size=self.opts.batch_size,
@@ -85,6 +85,8 @@ class YoloV3Test(object):
                 top_cls_idx = np.array([result[:, 6] for result in results], dtype='int32')
                 top_score = np.array([result[:, 4] * result[:, 5] for result in results], dtype='float')
                 top_boxes = np.array([result[:, :4] for result in results], dtype='float')
+
+                # rss = np.array([result[result[:, 4] * result[:, 5] > 1.] for result in results], dtype='float')
 
                 # draw picture
                 for cls_idx, score, boxes, img_path in zip(top_cls_idx, top_score, top_boxes, img_paths):

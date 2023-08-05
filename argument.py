@@ -87,11 +87,11 @@ class Args(object):
         self.parser.add_argument('--checkpoints_dir', type=str, default=r'./checkpoints_dir', help='store the model')
         self.parser.add_argument('--shuffle', action='store_true', default=True)
         self.parser.add_argument('--drop_last', action='store_true', default=True)
-        self.parser.add_argument('--pretrain_file', type=str, default='./checkpoints_dir/epoch98.pkl',
+        self.parser.add_argument('--pretrain_file', type=str, default='./checkpoints_dir/epoch60.pkl',
                                  help='store the latest model file')
-        self.parser.add_argument('--conf_thresh', type=float, default=0.0,
+        self.parser.add_argument('--conf_thresh', type=float, default=0.6,
                                  help='filter the bbox which confidence less than confidence threshold')
-        self.parser.add_argument('--iou_thresh', type=float, default=0.0,
+        self.parser.add_argument('--iou_thresh', type=float, default=0.6,
                                  help='apply to NMS, filter the bbox which iou greater than iou threshold')
 
         self.opts = self.parser.parse_args()

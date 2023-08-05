@@ -25,7 +25,7 @@ class YoloV3Loss(nn.Module):
         self.balance = [0.4, 1.0, 4]
 
         self.box_ratio = 0.05
-        self.obj_ratio = 5 * (input_shape[0] * input_shape[1]) / (416 ** 2)
+        self.no_obj_ratio = 0.5
         self.cls_ratio = 1 * (5 + self.classes_num) / 80
 
     def generator_labels(
@@ -143,28 +143,40 @@ class YoloV3Loss(nn.Module):
             # small obj has larger scale weight, larger obj has smaller scale weight
             box_loss_scale = (2 - box_loss_scale).to(self.gpu_id)
 
-        # coordinate offset loss
-        loss_tx = torch.mean(
-            xy_loss_func(tx, gt_tensor[..., 0]) * (
-                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
-        loss_ty = torch.mean(
-            xy_loss_func(ty, gt_tensor[..., 1]) * (
-                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
+        obj_mask = gt_tensor[..., -1] == 1
+        no_obj_mask = gt_tensor[..., -1] == -1
+        valid_obj_num, valid_no_obj_num = torch.sum(obj_mask), torch.sum(no_obj_mask)
+        if valid_obj_num:
+            # coordinate offset loss
+            loss_tx = torch.mean(
+                xy_loss_func(tx[obj_mask],
+                             gt_tensor[..., 0][obj_mask]).float() * box_loss_scale[obj_mask] * self.opts.coord_weight)
+            loss_ty = torch.mean(
+                xy_loss_func(ty[obj_mask],
+                             gt_tensor[..., 1][obj_mask]).float() * box_loss_scale[obj_mask] * self.opts.coord_weight)
 
-        loss_tw = torch.mean(
-            wh_loss_func(tw, gt_tensor[..., 2]) * (
-                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
-        loss_th = torch.mean(
-            wh_loss_func(th, gt_tensor[..., 3]) * (
-                    gt_tensor[..., -1] == 1).float() * box_loss_scale * self.opts.coord_weight)
+            loss_tw = torch.mean(
+                wh_loss_func(tw[obj_mask],
+                             gt_tensor[..., 2][obj_mask]).float() * box_loss_scale[obj_mask] * self.opts.coord_weight)
+            loss_th = torch.mean(
+                wh_loss_func(th[obj_mask],
+                             gt_tensor[..., 3][obj_mask]).float() * box_loss_scale[obj_mask] * self.opts.coord_weight)
 
-        loss_cls = torch.mean(
-            cls_loss_func(pred_cls, gt_tensor[..., 5:-1]) * (gt_tensor[..., -1] == 1).float().unsqueeze(-1))
-        loss_conf = torch.mean(
-            conf_loss_func(pred_conf, gt_tensor[..., 4]) * (gt_tensor[..., -1] == 1).float()) * self.balance[level]
-        no_obj_loss_conf = torch.mean(
-            conf_loss_func(pred_conf, torch.zeros_like(pred_conf)) * (gt_tensor[..., -1] == -1).float()) * self.balance[
-                               level]
-        avg_loss += (loss_tx + loss_ty + loss_tw + loss_th) * self.box_ratio + loss_cls * self.cls_ratio + \
-                    (loss_conf + no_obj_loss_conf) * self.obj_ratio
+            loss_cls = torch.mean(
+                cls_loss_func(pred_cls[obj_mask], gt_tensor[..., 5:-1][obj_mask]).float().unsqueeze(-1))
+
+            loss_conf = torch.mean(
+                conf_loss_func(pred_conf[obj_mask], gt_tensor[..., 4][obj_mask]).float()) * self.balance[level]
+            obj_loss = (loss_tx + loss_ty + loss_tw + loss_th) * 0.1 * self.box_ratio + loss_cls * self.cls_ratio + \
+                       loss_conf
+        else:
+            obj_loss = 0.
+        if valid_no_obj_num:
+            no_obj_loss_conf = torch.mean(
+                conf_loss_func(pred_conf[no_obj_mask],
+                               torch.zeros_like(pred_conf)[no_obj_mask]).float()) * self.balance[level]
+            no_obj_loss = no_obj_loss_conf * self.no_obj_ratio
+        else:
+            no_obj_loss = 0.
+        avg_loss += obj_loss + no_obj_loss
         return avg_loss
