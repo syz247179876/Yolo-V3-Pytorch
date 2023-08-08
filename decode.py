@@ -24,8 +24,9 @@ class DecodeFeature(object):
             grid_h: int,
             grid_w: int,
             batch_size: int,
-            method: int = 1
-    ) -> torch.Tensor:
+            method: int = 1,
+            split_res: bool = False,
+    ) -> t.Union[torch.Tensor, t.Tuple[torch.Tensor, torch.Tensor]]:
         """
         generator grid according to the grid
         note: I implement two methods to generate grid and w, h
@@ -41,12 +42,14 @@ class DecodeFeature(object):
         else:
             # method two:
             grid_x = torch.linspace(0, grid_h - 1, grid_h).repeat(grid_h, 1). \
-                repeat(batch_size * ANCHORS_NUM, 1, 1).view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1)
+                repeat(batch_size * ANCHORS_NUM, 1, 1).view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1).\
+                type(torch.FloatTensor)
             grid_y = torch.linspace(0, grid_w - 1, grid_w).repeat(grid_w, 1).t(). \
-                repeat(batch_size * ANCHORS_NUM, 1, 1).view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1)
+                repeat(batch_size * ANCHORS_NUM, 1, 1).view(batch_size, ANCHORS_NUM, grid_h, grid_w, 1). \
+                type(torch.FloatTensor)
             # dimension -> [B, anchors_nums, 13, 13, 2], if down sample multiple is 32
             grid_xy = torch.cat((grid_x, grid_y), dim=-1)
-        return grid_xy
+        return grid_xy if not split_res else (grid_x, grid_y)
 
     def decode_pred(self, inputs: t.Union[t.List[torch.Tensor], t.Tuple[torch.Tensor, ...]]) -> t.List:
         """
@@ -77,10 +80,19 @@ class DecodeFeature(object):
             long_ = torch.cuda.LongTensor if pred.is_cuda else torch.LongTensor
 
             # compute bx, by, bw, bh
-            grid_xy = self.generator_xy(g_h, g_w, batch_size, method=0)
+            grid_x, grid_y = self.generator_xy(g_h, g_w, batch_size, method=0, split_res=True)
+            # grid_xy = self.generator_xy(g_h, g_w, batch_size, method=0)
+            # if pred.is_cuda:
+            #     grid_xy = grid_xy.to(self.opts.gpu_id)
+            # b_xy = torch.sigmoid(pred[..., :2]) + grid_xy
+
             if pred.is_cuda:
-                grid_xy = grid_xy.to(self.opts.gpu_id)
-            b_xy = torch.sigmoid(pred[..., :2]) + grid_xy
+                grid_x = grid_x.to(self.opts.gpu_id)
+                grid_y = grid_y.to(self.opts.gpu_id)
+            _x = torch.sigmoid(pred[..., 0])
+            _y = torch.sigmoid(pred[..., 1])
+            b_x = _x + grid_x.view(_x.size())
+            b_y = _y + grid_y.view(_y.size())
 
             pw, ph = pred[..., 2], pred[..., 3]
             anchor_w = float_(scaled_anchors).index_select(1, long_([0])).repeat(batch_size, 1). \
@@ -90,7 +102,9 @@ class DecodeFeature(object):
             b_w = torch.exp(pw) * anchor_w
             b_h = torch.exp(ph) * anchor_h
 
-            pred[..., :2] = b_xy
+            # pred[..., :2] = b_xy
+            pred[..., 0] = b_x
+            pred[..., 1] = b_y
             pred[..., 2] = b_w
             pred[..., 3] = b_h
 
@@ -99,12 +113,10 @@ class DecodeFeature(object):
             if pred.is_cuda:
                 scale = scale.to(self.opts.gpu_id)
             # concat bx, by, bw, bh, conf, cls
-            # css = pred[..., :4].view(batch_size, -1, 4)
-            # csss = css / scale
             output = torch.cat((pred[..., :4].view(batch_size, -1, 4) / scale,
                                 torch.sigmoid(pred[..., 4]).view(batch_size, -1, 1),
-                                pred[..., 5:].view(batch_size, -1, self.classes_num)), dim=-1)
-            outputs.append(output)
+                                torch.sigmoid(pred[..., 5:].view(batch_size, -1, self.classes_num))), dim=-1)
+            outputs.append(output.data)
         return outputs
 
     def execute_nms(

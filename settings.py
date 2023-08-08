@@ -14,7 +14,8 @@ COCO_CLASS_NUM = 80
 # anchors obtained based on clustering algorithm using a distance of 1 - iou(anchors, gt_box)
 ANCHORS = [[(116, 90), (156, 198), (327, 326)],
            [(30, 61), (64, 45), (59, 119)],
-           [(10, 13), (16, 30), (33, 23)], ]
+           [(10, 13), (16, 30), (33, 23)]]
+ANCHORS_SORT = [(10, 13), (16, 30), (33, 23), (30, 61), (62, 45), (59, 119), (116, 90), (156, 198), (373, 326)]
 ANCHORS_MASK = [
     [6, 7, 8],
     [3, 4, 5],

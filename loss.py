@@ -22,11 +22,14 @@ class YoloV3Loss(nn.Module):
         self.opts = args_train.opts
         self.use_gpu = args_train.opts.use_gpu
         self.gpu_id = args_train.opts.gpu_id
-        self.balance = [0.4, 1.0, 4]
+        self.balance = [0.5, 1.0, 2.0]
 
         self.box_ratio = 0.05
         self.no_obj_ratio = 0.5
         self.cls_ratio = 1 * (5 + self.classes_num) / 80
+        self.obj_ratio = 2 * (input_shape[0] * input_shape[1]) / (416 ** 2)
+
+        self.coord_mode = self.opts.coord_loss_mode
 
     def generator_labels(
             self,
@@ -40,8 +43,8 @@ class YoloV3Loss(nn.Module):
         divide positive labels, negative labels, ignore labels
 
         Input:
-            labels: List[torch.Tensor] -> [[[x_min, y_min, x_max, y_max, cls_id], ...], [], []]
-            x_min, y_min, x_max, y_max has been normalized
+            labels: List[torch.Tensor] -> [[[x_mid, y_mid, w, h, cls_id], ...], [], []]
+            x_mid, y_mid, w, h has been normalized
         """
         batch_size = len(labels)
 
@@ -63,7 +66,7 @@ class YoloV3Loss(nn.Module):
             compute iou between anchors and labels, we only pay attention to the shape of w and h, not care center 
             position, as we can learn the offset continuously.
             """
-            gt_box = torch.cat((torch.zeros((batch_tensor.size(0), 2)), batch_tensor[:, [2, 3]]), 1).type(torch.float32)
+            gt_box = torch.cat((torch.zeros((batch_tensor.size(0), 2)), batch_tensor[:, 2: 4]), 1).type(torch.float32)
             anchors_box = torch.cat((torch.zeros(len(scaled_anchors), 2), torch.tensor(scaled_anchors)), 1).type(
                 torch.float32)
 
@@ -79,29 +82,29 @@ class YoloV3Loss(nn.Module):
                 grid_x = torch.floor(batch_tensor[i, 0]).long()
                 grid_y = torch.floor(batch_tensor[i, 1]).long()
                 for a_id in range(len(a_idxes)):
-                    if a_id == best_a_idx and best_a_idx in ANCHORS_MASK[level]:
+                    if (a_id == best_a_idx) and a_id in ANCHORS_MASK[level]:
                         # access best anchor by using ANCHORS_MASK[level][aim_a_idx], 0 <= aim_a_dix <= 2
-                        aim_a_idx = ANCHORS_MASK[level].index(best_a_idx)
+                        aim_a_idx = ANCHORS_MASK[level].index(a_id)
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 0] = batch_tensor[i, 0] - grid_x.float()
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 1] = batch_tensor[i, 1] - grid_y.float()
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 2] = torch.log(
-                            batch_tensor[i, 2] / scaled_anchors[best_a_idx][0])
+                            batch_tensor[i, 2] / scaled_anchors[a_id][0])
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 3] = torch.log(
-                            batch_tensor[i, 3] / scaled_anchors[best_a_idx][1])
+                            batch_tensor[i, 3] / scaled_anchors[a_id][1])
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 4] = 1
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, 5 + batch_tensor[i, 4].long()] = 1
-                        box_loss_scale[batch_idx, aim_a_idx, grid_y, grid_x] = batch_label[i, 2] * batch_label[
+                        box_loss_scale[batch_idx, aim_a_idx, grid_y, grid_x] = batch_tensor[i, 2] * batch_tensor[
                             i, 3] / f_w / f_h
                         # set positive samples
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, -1] = 1
-                    elif iou_plural[i][a_id] < self.opts.anchors_thresh and a_id in ANCHORS_MASK[level]:
+                    elif a_idxes[a_id] < self.opts.anchors_negative_thresh and a_id in ANCHORS_MASK[level]:
                         # set negative samples
                         aim_a_idx = ANCHORS_MASK[level].index(a_id)
                         gt_tensor[batch_idx, aim_a_idx, grid_y, grid_x, -1] = -1
 
         return gt_tensor, box_loss_scale
 
-    def forward(self, level: int, pred: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    def forward(self, level: int, pred: torch.Tensor, labels: torch.Tensor) -> t.Tuple[torch.Tensor, t.Tuple]:
         """
         Input:
             level: it means the level of feature map, there are three level in YOLO v3 net, 13x13, 26x26, 52x52
@@ -115,8 +118,7 @@ class YoloV3Loss(nn.Module):
         stride_h = self.input_shape[0] / f_h
         stride_w = self.input_shape[1] / f_w
 
-        scaled_anchors = [(anchor_w / stride_w, anchor_h / stride_h) for anchor_level in ANCHORS for anchor_w, anchor_h
-                          in anchor_level]
+        scaled_anchors = [(anchor_w / stride_w, anchor_h / stride_h) for anchor_w, anchor_h in ANCHORS_SORT]
         pred = pred.view(batch_size, ANCHORS_NUM, 4 + 1 + self.classes_num, f_h, f_w). \
             permute(0, 1, 3, 4, 2).contiguous()
 
@@ -130,6 +132,13 @@ class YoloV3Loss(nn.Module):
 
         gt_tensor, box_loss_scale = self.generator_labels(level, labels, scaled_anchors, f_h, f_w)
         avg_loss = torch.tensor(0.)
+        loss_tx = torch.tensor(0.)
+        loss_ty = torch.tensor(0.)
+        loss_tw = torch.tensor(0.)
+        loss_th = torch.tensor(0.)
+        loss_cls = torch.tensor(0.)
+        loss_conf = torch.tensor(0.)
+        no_obj_loss_conf = torch.tensor(0.)
         if self.use_gpu:
             gt_tensor = gt_tensor.to(self.gpu_id)
             tx = tx.to(self.gpu_id)
@@ -139,6 +148,13 @@ class YoloV3Loss(nn.Module):
             pred_conf = pred_conf.to(self.gpu_id)
             pred_cls = pred_cls.to(self.gpu_id)
             avg_loss = avg_loss.to(self.gpu_id)
+            loss_tx = loss_tx.to(self.gpu_id)
+            loss_ty = loss_ty.to(self.gpu_id)
+            loss_tw = loss_tw.to(self.gpu_id)
+            loss_th = loss_th.to(self.gpu_id)
+            loss_cls = loss_cls.to(self.gpu_id)
+            loss_conf = loss_conf.to(self.gpu_id)
+            no_obj_loss_conf = no_obj_loss_conf.to(self.gpu_id)
 
             # small obj has larger scale weight, larger obj has smaller scale weight
             box_loss_scale = (2 - box_loss_scale).to(self.gpu_id)
@@ -163,20 +179,20 @@ class YoloV3Loss(nn.Module):
                              gt_tensor[..., 3][obj_mask]).float() * box_loss_scale[obj_mask] * self.opts.coord_weight)
 
             loss_cls = torch.mean(
-                cls_loss_func(pred_cls[obj_mask], gt_tensor[..., 5:-1][obj_mask]).float().unsqueeze(-1))
+                cls_loss_func(pred_cls[obj_mask], gt_tensor[..., 5:-1][obj_mask]).float())
 
             loss_conf = torch.mean(
                 conf_loss_func(pred_conf[obj_mask], gt_tensor[..., 4][obj_mask]).float()) * self.balance[level]
-            obj_loss = (loss_tx + loss_ty + loss_tw + loss_th) * 0.1 * self.box_ratio + loss_cls * self.cls_ratio + \
-                       loss_conf
+            obj_loss = (loss_tx + loss_ty + loss_tw + loss_th) * self.box_ratio + \
+                       loss_conf * self.obj_ratio + loss_cls * self.cls_ratio
         else:
             obj_loss = 0.
         if valid_no_obj_num:
             no_obj_loss_conf = torch.mean(
                 conf_loss_func(pred_conf[no_obj_mask],
                                torch.zeros_like(pred_conf)[no_obj_mask]).float()) * self.balance[level]
-            no_obj_loss = no_obj_loss_conf * self.no_obj_ratio
+            no_obj_loss = no_obj_loss_conf * self.obj_ratio
         else:
             no_obj_loss = 0.
         avg_loss += obj_loss + no_obj_loss
-        return avg_loss
+        return avg_loss, (loss_tx, loss_ty, loss_tw, loss_th, loss_conf, no_obj_loss_conf, loss_cls)

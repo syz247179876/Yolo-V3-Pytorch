@@ -38,20 +38,24 @@ class Args(object):
                                  default=r'C:\Users\24717\Projects\pascal voc2012\VOCdevkit\VOC2012',
                                  help='the base dir of dataset'
                                  )
-        self.parser.add_argument('--anchors_thresh', type=float, default=0.5,
+        self.parser.add_argument('--anchors_thresh', type=float, default=0.6,
                                  help='threshold for selecting positive sample anchors'
                                  )
+        self.parser.add_argument('--anchors_negative_thresh', type=float, default=0.2,
+                                 help='threshold for selecting negative sample anchors')
         self.parser.add_argument('--epoch', type=int, default=0, help='the epoch of current training')
-        self.parser.add_argument('--batch_size', type=int, default=8)
+        self.parser.add_argument('--batch_size', type=int, default=4)
         self.parser.add_argument('--use_gpu', action='store_true')
         self.parser.add_argument('--gpu_id', type=int, default=None)
         self.parser.add_argument('--num_workers', type=int, default=4)
+        self.parser.add_argument('--coord_loss_mode', type=str, default='giou',
+                                 help='mode for calculating coordinate loss')
         # learning rate interval
-        self.parser.add_argument('--lr_base', type=float, default=1e-2)
+        self.parser.add_argument('--lr_base', type=float, default=5e-2)
         self.parser.add_argument('--lr_max', type=float, default=5e-2, help='maximum of learning rate')
         self.parser.add_argument('--lr_min', type=float, default=5e-5, help='minimum of learning rate')
-        self.parser.add_argument('--weight_decay', type=float, default=1e-4, help='regularization coefficient')
-        self.parser.add_argument('--pretrain_file', type=str,
+        self.parser.add_argument('--weight_decay', type=float, default=5e-4, help='regularization coefficient')
+        self.parser.add_argument('--pretrain_file', type=str, default=r'./checkpoints_dir/epoch74.pkl',
                                  help='store the latest model file')
         self.parser.add_argument('--random_seed', type=int, default=42)
         self.parser.add_argument('--print_frequency', type=int, default=60, help='print interval')
@@ -60,7 +64,7 @@ class Args(object):
         self.parser.add_argument('--shuffle', action='store_true', default=True)
         self.parser.add_argument('--drop_last', action='store_true', default=True)
 
-        self.parser.add_argument('--start_epoch', type=int, default=0)
+        self.parser.add_argument('--start_epoch', type=int, default=75)
         self.parser.add_argument('--end_epoch', type=int, default=100)
 
         # loss weight
@@ -87,11 +91,11 @@ class Args(object):
         self.parser.add_argument('--checkpoints_dir', type=str, default=r'./checkpoints_dir', help='store the model')
         self.parser.add_argument('--shuffle', action='store_true', default=True)
         self.parser.add_argument('--drop_last', action='store_true', default=True)
-        self.parser.add_argument('--pretrain_file', type=str, default='./checkpoints_dir/epoch60.pkl',
+        self.parser.add_argument('--pretrain_file', type=str, default='./checkpoints_dir/epoch80.pkl',
                                  help='store the latest model file')
-        self.parser.add_argument('--conf_thresh', type=float, default=0.6,
+        self.parser.add_argument('--conf_thresh', type=float, default=0.5,
                                  help='filter the bbox which confidence less than confidence threshold')
-        self.parser.add_argument('--iou_thresh', type=float, default=0.6,
+        self.parser.add_argument('--iou_thresh', type=float, default=0.5,
                                  help='apply to NMS, filter the bbox which iou greater than iou threshold')
 
         self.opts = self.parser.parse_args()

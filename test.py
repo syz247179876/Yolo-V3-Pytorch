@@ -1,18 +1,18 @@
 import os.path
 import time
 import typing as t
+
 import numpy as np
 import torch
-from PIL import Image, ImageDraw
-from colorama import Fore
+from PIL import Image
 from torch.utils.data import DataLoader
 
 from argument import args_test
 from data.voc_data import VOCDataset
 from decode import DecodeFeature
-from loss import YoloV3Loss
-from settings import VOC_CLASSES, INPUT_SHAPE
-from utils import detection_collate, print_log, set_font_thickness, generate_colors
+from loss2 import YOLOLoss
+from settings import VOC_CLASSES, INPUT_SHAPE, ANCHORS_SORT, VOC_CLASS_NUM
+from utils import detection_collate, print_log, generate_colors, draw_image
 
 
 class YoloV3Test(object):
@@ -50,8 +50,10 @@ class YoloV3Test(object):
             model.to(self.opts.gpu_id)
         model.eval()
 
-        loss_obj = YoloV3Loss()
+        loss_obj = YOLOLoss(ANCHORS_SORT, VOC_CLASS_NUM, INPUT_SHAPE, self.opts.use_gpu,
+                            [[6, 7, 8], [3, 4, 5], [0, 1, 2]])
         total_loss = 0.
+        detail_list = [0 for _ in range(3)]
         for batch, (x, labels, img_paths, image_shapes) in enumerate(test_loader):
             with torch.no_grad():
                 if self.opts.use_gpu:
@@ -60,7 +62,10 @@ class YoloV3Test(object):
                 cur_loss = torch.tensor(0).float().to(self.opts.gpu_id)
                 t1 = time.time()
                 for idx, output in enumerate(pred):
-                    cur_loss += loss_obj(idx, output, labels)
+                    temp, details = loss_obj(idx, output, labels)
+                    cur_loss += temp
+                    for _id, detail in enumerate(details):
+                        detail_list[_id] += detail.item()
                 t2 = time.time()
                 total_loss += cur_loss.item()
                 print_log(
@@ -75,55 +80,22 @@ class YoloV3Test(object):
                     self.letterbox_image
                 )
 
-                # set font and frame
-                font_path = os.path.join(os.path.dirname(__file__), r'static/font/simhei.ttf')
-                thickness = (image_shapes // np.mean(INPUT_SHAPE)).flatten()
-                font, thickness = set_font_thickness(font_path,
-                                                     np.floor(3e-2 * image_shapes[batch][1] + 0.5).astype('int32'),
-                                                     thickness)
-
-                top_cls_idx = np.array([result[:, 6] for result in results], dtype='int32')
-                top_score = np.array([result[:, 4] * result[:, 5] for result in results], dtype='float')
+                thickness = 1
+                top_cls_idxs = np.array([result[:, 6] for result in results], dtype='int32')
+                top_scores = np.array([result[:, 4] * result[:, 5] for result in results], dtype='float')
                 top_boxes = np.array([result[:, :4] for result in results], dtype='float')
 
-                # rss = np.array([result[result[:, 4] * result[:, 5] > 1.] for result in results], dtype='float')
-
                 # draw picture
-                for cls_idx, score, boxes, img_path in zip(top_cls_idx, top_score, top_boxes, img_paths):
+                for cls_ids, scores, boxes, img_path in zip(top_cls_idxs, top_scores, top_boxes, img_paths):
                     # dimension -> [num1, 1], num1 < anchor_num * g_h * g_w
-                    cls_idx: np.ndarray
-                    score: np.ndarray
+                    cls_ids: np.ndarray
+                    scores: np.ndarray
                     boxes: np.ndarray
                     img_path: str
                     cur_img = Image.open(img_path)
-                    width, height = cur_img.size
-
-                    for i, s, b in zip(cls_idx, score, boxes):
-                        pred_cls_name = VOC_CLASSES[int(i)]
-                        top, left, bottom, right = b
-                        top = max(0, np.floor(top).astype('int32'))
-                        left = max(0, np.floor(left).astype('int32'))
-                        bottom = min(cur_img.size[1], np.floor(bottom).astype('int32'))
-                        right = min(cur_img.size[0], np.floor(right).astype('int32'))
-                        draw = ImageDraw.Draw(cur_img)
-                        label = f'{pred_cls_name} {round(s, 2)}'
-                        label_size = draw.textsize(label, font)
-                        print_log(f'{label} {top} {left} {bottom} {right}', Fore.BLUE)
-
-                        if top - label_size[1] >= 0:
-                            text_origin = np.array((left, top - label_size[1]))
-                        else:
-                            text_origin = np.array((left, top + 1))
-                        if height > top > 0 and width > left > 0 and height > bottom > 0 and width > right > 0:
-                            for step in range(thickness):
-                                draw.rectangle((left + step, top + step, right - step, bottom - step),
-                                               outline=self.colors[i])
-                            draw.rectangle((tuple(text_origin), tuple(text_origin + label_size)), fill=self.colors[i])
-                            draw.text(tuple(text_origin), label, fill=(0, 0, 0), font=font)
-                            del draw
-                        # cv2.imshow("bbox", np.array(cur_img))
-                        # cv2.waitKey(0)
-                    cur_img.show()
+                    cur_img = cur_img.convert('RGB')
+                    # draw image
+                    draw_image(cls_ids, boxes, scores, cur_img, VOC_CLASSES, thickness)
 
         avg_loss = total_loss / (len(test_loader) + 1)
         print_log(f"Test set: Average loss: {round(avg_loss, 6)}, Total num: {test_num}")

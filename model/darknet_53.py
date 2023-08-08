@@ -1,6 +1,7 @@
 """
 Darknet-53 model
 """
+import math
 from collections import OrderedDict
 
 import torch
@@ -93,6 +94,15 @@ class BackBone(nn.Module):
         self.layer3 = self._create_layer((128, 256), DRK_53_RESIDUAL_BLOCK_NUMS[2])
         self.layer4 = self._create_layer((256, 512), DRK_53_RESIDUAL_BLOCK_NUMS[3])
         self.layer5 = self._create_layer((512, 1024), DRK_53_RESIDUAL_BLOCK_NUMS[4])
+
+        # init weight
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
         self.tail = nn.Sequential(
             nn.AdaptiveAvgPool2d((1, 1)),

@@ -1,4 +1,5 @@
 import typing as t
+import cv2
 import torch
 import numpy as np
 import colorsys
@@ -44,7 +45,11 @@ def resize_img_box(
     else:
         new_image = image.resize((n_w, n_h), Image.BICUBIC)
         # TODO resize box
-
+    # draw = ImageDraw.Draw(new_image)
+    # for label in labels:
+    #     draw.rectangle((label[0], label[1], label[2], label[3]), outline="red")
+    # del draw
+    # new_image.show()
     return np.array(new_image, np.float32), labels
 
 
@@ -71,16 +76,16 @@ def revert_img_box(
     image_shape = np.array(image_shape)
 
     if letterbox_image:
-        scale = np.min(input_shape / image_shape)
+        # scale = np.min(input_shape / image_shape)
         new_shape = np.round(image_shape * np.min(input_shape / image_shape))
         # this offset is the offset of the effective area of the image according to the top-left corner of the image.
         # you can draw in your draft paper to understand
         # remember offset should be normalized, as the box_xy and box_wh are be normalized!
         offset = (input_shape - new_shape) / 2.0 / input_shape
-        # scale = input_shape / new_shape
+        scale = input_shape / new_shape
 
-        box_xy = (box_xy - offset) / scale
-        box_wh /= scale
+        box_xy = (box_xy - offset) * scale
+        box_wh *= scale
     box_t_l = box_xy - box_wh / 2.
     box_b_r = box_xy + box_wh / 2.
     boxes = np.concatenate([box_t_l[..., 0: 1], box_t_l[..., 1: 2], box_b_r[..., 0: 1], box_b_r[..., 1: 2]], axis=-1)
@@ -128,10 +133,11 @@ def compute_iou_gt_anchors(
     inter = inter[..., 0] * inter[..., 1]
 
     # compute union
-    gt_area = (gt_boxes[:, 2] * gt_boxes[:, 3]).unsqueeze(1).expand_as(inter)
-    a_area = (anchor_boxes[:, 2] * anchor_boxes[:, 3]).unsqueeze(0).expand_as(inter)
-
-    return inter / (gt_area + a_area - inter + 1e-20)
+    # gt_area = (gt_boxes[:, 2] * gt_boxes[:, 3]).unsqueeze(1).expand_as(inter)
+    # a_area = (anchor_boxes[:, 2] * anchor_boxes[:, 3]).unsqueeze(0).expand_as(inter)
+    gt_area = ((box_gt[:, 2] - box_gt[:, 0]) * (box_gt[:, 3] - box_gt[:, 1])).unsqueeze(1).expand_as(inter)
+    a_area = ((box_a[:, 2] - box_a[:, 0]) * (box_a[:, 3] - box_a[:, 1])).unsqueeze(0).expand_as(inter)
+    return inter / (gt_area + a_area - inter)
 
 
 def print_log(txt: str, color: t.Any = Fore.GREEN):
@@ -276,7 +282,8 @@ class ComputeMAP(object):
             tp_list[idx] = 1
         return gt_num, tp_list.tolist(), conf.tolist()
 
-    def calculate_pr(self, gt_num: int, tp_list: t.List, confidence_score: t.List) -> t.Tuple[t.List, t.List]:
+    @staticmethod
+    def calculate_pr(gt_num: int, tp_list: t.List, confidence_score: t.List) -> t.Tuple[t.List, t.List]:
         """
         calculate p-r according to gt number and tp_list for a certain category in a certain image
         """
@@ -317,6 +324,97 @@ def generate_colors(classes_num: int) -> t.List:
     colors = list(map(lambda x: colorsys.hsv_to_rgb(*x), hsv_tuples))
     colors = list(map(lambda x: (int(x[0] * 255), int(x[1] * 255), int(x[2] * 255)), colors))
     return colors
+
+
+def print_detail(
+        cur_epoch: int,
+        end_epoch: int,
+        batch: int,
+        iter_total: int,
+        last_loss: float,
+        tx_loss: float,
+        ty_loss: float,
+        tw_loss: float,
+        th_loss: float,
+        obj_conf_loss: float,
+        no_obj_conf_loss: float,
+        cls_loss: float,
+        avg_loss: float,
+        log_f: t.TextIO,
+        write: bool = False,
+) -> None:
+    """
+    print log information during epoch in training
+    when write is True, write down the detail info.
+    """
+    info = f'Epoch: {cur_epoch}/{end_epoch} \tIter: {batch}/{iter_total} \ttx_loss: {round(tx_loss, 4)} ' \
+           f'\tty_loss: {round(ty_loss, 4)} \ttw_loss: {round(tw_loss, 4)} \tth_loss: {round(th_loss, 4)}' \
+           f'\tcls_loss: {round(cls_loss, 4)} \n\tobj_conf_loss: {round(obj_conf_loss, 4)} ' \
+           f'\tno_obj_conf_loss: {round(no_obj_conf_loss, 4)} \tlast_loss: {round(last_loss, 4)} ' \
+           f'\tavg_loss: {round(avg_loss, 6)}\n'
+
+    print_log(info, color=Fore.RED)
+    if write:
+        log_f.write(info)
+        log_f.flush()
+
+
+def print_detail_giou(
+        cur_epoch: int,
+        end_epoch: int,
+        batch: int,
+        iter_total: int,
+        last_loss: float,
+        loss_loc: float,
+        loss_conf: float,
+        loss_cls: float,
+        avg_loss: float,
+        log_f: t.TextIO,
+        write: bool = False,
+) -> None:
+    info = f'Epoch: {cur_epoch}/{end_epoch} \tIter: {batch}/{iter_total} \tloss_loc: {round(loss_loc, 4)} ' \
+           f'\tloss_conf: {round(loss_conf, 4)} \tloss_cls: {round(loss_cls, 4)} ' \
+           f'\tlast_loss: {round(last_loss, 4)} \tavg_loss: {round(avg_loss, 6)}\n'
+
+    print_log(info, color=Fore.RED)
+    if write:
+        log_f.write(info)
+        log_f.flush()
+
+
+def draw_image(
+        cls_ids: t.Union[t.List, np.ndarray],
+        coords: t.Union[t.List, np.ndarray],
+        scores: t.Union[t.List, np.ndarray],
+        cur_img: t.Any,
+        classes: t.Union[t.List, np.ndarray],
+        thickness: int = 1,
+) -> None:
+    """
+    draw box
+    """
+    colors = generate_colors(len(classes))
+    width, height = cur_img.size
+    cur_img = np.array(cur_img)
+    for cls_id, score, coord in zip(cls_ids, scores, coords):
+        pred_cls_name = classes[int(cls_id)]
+        top, left, bottom, right = coord
+        top = max(0, np.floor(top).astype('int32'))
+        left = max(0, np.floor(left).astype('int32'))
+        bottom = min(width, np.floor(bottom).astype('int32'))
+        right = min(width, np.floor(right).astype('int32'))
+        label = f'{pred_cls_name} {round(score, 2)}'
+        print_log(f'{label} {top} {left} {bottom} {right}', Fore.BLUE)
+        if top - 2 > 0:
+            text_pos = np.array((top - 1, left))
+        else:
+            text_pos = np.array((top + 1, left))
+
+        cv2.rectangle(cur_img, (top, left), (bottom, right), color=colors[cls_id], thickness=thickness)
+        cv2.putText(cur_img, label, tuple(text_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                    color=colors[cls_id], thickness=thickness)
+    cv2.imshow(f"bbox", cur_img[:, :, ::-1])
+    cv2.waitKey(0)
 
 
 if __name__ == "__main__":
